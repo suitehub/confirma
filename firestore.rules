@@ -1,0 +1,66 @@
+rules_version = '2';
+service cloud.firestore {
+  match /databases/{database}/documents {
+
+    // First Rule: Global Safety Net (Default Deny)
+    match /{document=**} {
+      allow read, write: if false;
+    }
+
+    // Global helper functions
+    function isSignedIn() {
+      return request.auth != null;
+    }
+
+    function isEmailVerified() {
+      return isSignedIn();
+    }
+
+    function isValidId(id) {
+      return id is string && id.size() <= 128 && id.matches('^[a-zA-Z0-9_\\-]+$');
+    }
+
+    function incoming() {
+      return request.resource.data;
+    }
+
+    function existing() {
+      return resource.data;
+    }
+
+    // Validation helper for User document (blueprint constraints)
+    function isValidUser(data) {
+      return data.keys().hasAll(['state', 'updatedAt']) 
+        && data.keys().size() == 2
+        && data.state is map
+        && data.updatedAt is timestamp;
+    }
+
+    // Allow connection testing to the test/connection document (Phase 1)
+    match /test/{docId} {
+      allow get: if true;
+    }
+
+    // User workspace document isolation (Zero-Trust sandbox)
+    match /users/{userId} {
+      allow get: if isSignedIn() && request.auth.uid == userId && isValidId(userId);
+      
+      allow create: if isSignedIn() 
+        && isEmailVerified()
+        && request.auth.uid == userId 
+        && isValidId(userId)
+        && isValidUser(incoming())
+        && incoming().updatedAt == request.time;
+        
+      allow update: if isSignedIn() 
+        && isEmailVerified()
+        && request.auth.uid == userId 
+        && isValidId(userId)
+        && isValidUser(incoming())
+        && incoming().updatedAt == request.time
+        && incoming().diff(existing()).affectedKeys().hasOnly(['state', 'updatedAt']);
+        
+      allow delete: if isSignedIn() && request.auth.uid == userId && isValidId(userId);
+    }
+  }
+}

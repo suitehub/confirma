@@ -1,0 +1,74 @@
+{
+  "entities": {
+    "User": {
+      "title": "User",
+      "description": "Clinical database record for a registered psychologist",
+      "type": "object",
+      "properties": {
+        "state": {
+          "$ref": "AppState",
+          "description": "Entire practice database including patients, sessions, records, financials, and templates"
+        },
+        "updatedAt": {
+          "type": "string",
+          "format": "date-time",
+          "description": "Server-side revision timestamp of the clinical state"
+        }
+      },
+      "required": ["state", "updatedAt"]
+    },
+    "AppState": {
+      "title": "AppState",
+      "description": "Complete localized clinician application state",
+      "type": "object",
+      "properties": {
+        "patients": {
+          "type": "array",
+          "description": "Array of registered patient profiles"
+        },
+        "sessions": {
+          "type": "array",
+          "description": "Weekly or single appointment clinical agendas"
+        },
+        "statuses": {
+          "type": "object",
+          "description": "Dictionary mapping individual session occurrences to attendance states"
+        },
+        "templates": {
+          "type": "object",
+          "description": "Clinician's active standard WhatsApp invitation and follow-up templates"
+        },
+        "customConfirmTemplates": {
+          "type": "array",
+          "description": "Custom communication snippets registered by the practitioner"
+        },
+        "waitingList": {
+          "type": "array",
+          "description": "Patients queue details"
+        },
+        "formsList": {
+          "type": "array",
+          "description": "Defined psycho-evaluative checklists or intake questionnaires"
+        },
+        "automations": {
+          "type": "array",
+          "description": "State configurations for WhatsApp automatic scheduling follow-ups"
+        },
+        "occurrenceFinancials": {
+          "type": "object",
+          "description": "Reconciled ledger accounts for individual clinic visits"
+        },
+        "evolutions": {
+          "type": "array",
+          "description": "Secure evolution logs and subjective clinic annotations"
+        }
+      }
+    }
+  },
+  "firestore": {
+    "/users/{userId}": {
+      "schema": "User",
+      "description": "Highly isolated private silo for psychologist users where document ID corresponds to Auth UID"
+    }
+  }
+}

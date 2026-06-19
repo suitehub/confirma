@@ -1,0 +1,6 @@
+{
+  "name": "Confirma",
+  "description": "Aplicativo para psicólogos gerenciarem e confirmarem sessões com pacientes de forma prática pelo WhatsApp.",
+  "requestFramePermissions": [],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}
