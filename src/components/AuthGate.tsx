@@ -18,7 +18,8 @@ import {
   EyeOff, 
   Loader2, 
   ChevronRight,
-  ArrowLeft
+  ArrowLeft,
+  Sparkles
 } from "lucide-react";
 
 interface AuthGateProps {
@@ -227,6 +228,18 @@ export default function AuthGate({ onAuthenticated, onLogout }: AuthGateProps) {
                 <div>
                   <h3 className="text-xs font-bold text-white uppercase tracking-wider">Faturamentos Claros</h3>
                   <p className="text-xs text-slate-300 font-light mt-0.5">Histórico de pagamentos recebidos e vencidos de forma simples e visual.</p>
+                </div>
+              </div>
+
+              <div className="flex items-start gap-3.5 group">
+                <div className="mt-1 h-7 w-7 rounded-lg bg-white/15 flex items-center justify-center border border-white/15 shadow-sm text-white shrink-0 animate-pulse">
+                  <Sparkles className="h-3.5 w-3.5 text-amber-300" />
+                </div>
+                <div>
+                  <h3 className="text-xs font-bold text-amber-300 uppercase tracking-wider flex items-center gap-1">
+                    Assistente IA Integrada
+                  </h3>
+                  <p className="text-xs text-slate-300 font-light mt-0.5">Otimize a gestão, analise faturamento, retenção e risco de abandono diretamente com inteligência artificial inteligente.</p>
                 </div>
               </div>
             </div>
