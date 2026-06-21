@@ -473,10 +473,10 @@ export default function App() {
         }
 
         const newPatient: Patient = {
+          ...patientData,
           id: crypto.randomUUID(),
           name: patientData.name!,
           phone: cleanPhone,
-          ...patientData,
         };
 
         return {
