@@ -1259,7 +1259,7 @@ export default function App() {
                                 Ver Prontuário
                               </button>
                               <button
-                                onClick={() => openWa(`Oi ${p.name}, tudo bem?`)}
+                                onClick={() => openWa(p.phone, `Oi ${p.name}, tudo bem?`)}
                                 className="inline-flex items-center gap-1 rounded-lg border border-brand-border bg-white px-2 py-1 text-[10px] font-bold text-brand-text hover:bg-emerald-50 hover:text-emerald-700 cursor-pointer"
                               >
                                 Conversar

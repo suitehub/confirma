@@ -58,7 +58,7 @@ export function waLink(phone: string, text: string): string {
   const p = normalizePhone(phone);
   const cleaned = sanitizeMessage(text);
   const encoded = encodeURIComponent(cleaned);
-  return `https://wa.me/${p}?text=${encoded}`;
+  return `https://api.whatsapp.com/send/?phone=${p}&text=${encoded}`;
 }
 
 export function replaceVars(tpl: string, vars: { nome: string; dia: string; hora: string }): string {
