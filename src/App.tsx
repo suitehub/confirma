@@ -1930,15 +1930,13 @@ export default function App() {
 
                         {/* Pix QR Code Mockup */}
                         <div className="bg-slate-50 rounded-2xl p-4 border border-brand-border max-w-[170px] mx-auto flex flex-col items-center">
-                          <div className="w-28 h-28 bg-slate-900 rounded-lg p-2 flex flex-wrap gap-1 relative overflow-hidden select-none">
-                            <div className="w-8 h-8 border-3 border-white rounded-md bg-transparent absolute top-2 left-2"></div>
-                            <div className="w-8 h-8 border-3 border-white rounded-md bg-transparent absolute top-2 right-2"></div>
-                            <div className="w-8 h-8 border-3 border-white rounded-md bg-transparent absolute bottom-2 left-2"></div>
-                            <div className="w-full h-full opacity-60 flex flex-wrap gap-1">
-                              {Array.from({ length: 48 }).map((_, i) => (
-                                <div key={i} className={`w-2 h-2 rounded-[0.5px] ${i % 3 === 0 ? "bg-white" : "bg-transparent"}`}></div>
-                              ))}
-                            </div>
+                          <div className="w-28 h-28 bg-white rounded-lg p-1.5 flex items-center justify-center border border-slate-200">
+                            <img
+                              src="https://api.qrserver.com/v1/create-qr-code/?size=150x150&data=00020101021226830014br.gov.bcb.pix2561pix.api.pagamentos.confirma_vitalicio.status_pending"
+                              alt="Pix QR Code"
+                              className="w-full h-full object-contain"
+                              referrerPolicy="no-referrer"
+                            />
                           </div>
                           <span className="text-[10px] text-brand-muted font-bold mt-2 font-mono">PIX TOTAL: R$ 99,90</span>
                         </div>

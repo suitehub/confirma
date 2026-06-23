@@ -91,7 +91,12 @@ async function startServer() {
 
       console.log(`[Stripe API] Creating real checkout session for user ${userId} (${email || "no-email"})`);
       const session = await stripe.checkout.sessions.create({
-        payment_method_types: ["card"],
+        payment_method_types: ["card", "pix"],
+        payment_method_options: {
+          pix: {
+            expires_after_seconds: 3600, // 1 hora de expiração para o QR code do Pix
+          },
+        },
         line_items: [
           {
             price_data: {
