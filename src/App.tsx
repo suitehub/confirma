@@ -2066,7 +2066,7 @@ export default function App() {
         </div>
         <div className="w-14 h-14 rounded-full flex items-center justify-center transition-all duration-300 hover:scale-115 active:scale-95 cursor-pointer relative">
           <img 
-            src="/whats.png" 
+            src="./whats.png" 
             alt="Suporte WhatsApp" 
             className="w-14 h-14 rounded-full object-cover" 
             referrerPolicy="no-referrer"
