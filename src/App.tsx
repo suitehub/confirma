@@ -2053,30 +2053,6 @@ export default function App() {
         }}
       />
 
-      {/* FIXED WHATSAPP SUPPORT FLOATING BUTTON */}
-      <a
-        href="https://wa.me/5511959760647?text=Olá!%20Preciso%20de%20suporte%20com%20o%20Confirma."
-        target="_blank"
-        rel="noreferrer"
-        className="fixed bottom-6 right-6 z-[999] flex items-center gap-2 group"
-        title="Falar com Suporte"
-      >
-        <div className="max-w-0 overflow-hidden group-hover:max-w-xs transition-all duration-300 ease-out bg-slate-900 text-white text-xs font-black py-2 px-3 rounded-xl shadow-lg whitespace-nowrap opacity-0 group-hover:opacity-100 flex items-center gap-1.5">
-          <span>Suporte WhatsApp</span>
-        </div>
-        <div className="w-14 h-14 rounded-full flex items-center justify-center transition-all duration-300 hover:scale-115 active:scale-95 cursor-pointer relative">
-          <img 
-            src="./whats.png" 
-            alt="Suporte WhatsApp" 
-            className="w-14 h-14 rounded-full object-cover" 
-            referrerPolicy="no-referrer"
-          />
-          <span className="absolute -top-0.5 -right-0.5 flex h-3 w-3">
-            <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-[#25D366] opacity-75"></span>
-            <span className="relative inline-flex rounded-full h-3 w-3 bg-[#25D366]"></span>
-          </span>
-        </div>
-      </a>
     </div>
   );
 }
