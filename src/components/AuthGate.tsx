@@ -1,6 +1,7 @@
 import React, { useState, useEffect } from "react";
 import { 
   signInWithEmailAndPassword, 
+  createUserWithEmailAndPassword,
   sendPasswordResetEmail, 
   verifyPasswordResetCode, 
   confirmPasswordReset 
@@ -19,7 +20,8 @@ import {
   Loader2, 
   ChevronRight,
   ArrowLeft,
-  Sparkles
+  Sparkles,
+  UserPlus
 } from "lucide-react";
 
 interface AuthGateProps {
@@ -30,6 +32,7 @@ interface AuthGateProps {
 export default function AuthGate({ onAuthenticated, onLogout }: AuthGateProps) {
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
+  const [confirmPassword, setConfirmPassword] = useState("");
   const [error, setError] = useState<string | null>(null);
   const [info, setInfo] = useState<string | null>(null);
   const [isResetMode, setIsResetMode] = useState(false);
@@ -41,6 +44,7 @@ export default function AuthGate({ onAuthenticated, onLogout }: AuthGateProps) {
   const [showPassword, setShowPassword] = useState(false);
   const [isSubmitLoading, setIsSubmitLoading] = useState(false);
   const [forgotPasswordActive, setForgotPasswordActive] = useState(false);
+  const [signUpMode, setSignUpMode] = useState(false);
 
   useEffect(() => {
     // Check if URL has oobCode for password reset
@@ -80,6 +84,42 @@ export default function AuthGate({ onAuthenticated, onLogout }: AuthGateProps) {
         setError("E-mail ou senha incorretos. Por favor, verifique.");
       } else {
         setError(err?.message || "Falha ao realizar login. Verifique as credenciais.");
+      }
+    } finally {
+      setIsSubmitLoading(false);
+    }
+  };
+
+  const handleSignUp = async (e: React.FormEvent) => {
+    e.preventDefault();
+    setError(null);
+    setInfo(null);
+    if (!email || !password || !confirmPassword) {
+      setError("Por favor, preencha todos os campos.");
+      return;
+    }
+    if (password.length < 6) {
+      setError("A senha deve ter pelo menos 6 caracteres.");
+      return;
+    }
+    if (password !== confirmPassword) {
+      setError("As senhas informadas não coincidem.");
+      return;
+    }
+    setIsSubmitLoading(true);
+    try {
+      const userCredential = await createUserWithEmailAndPassword(auth, email.trim(), password);
+      onAuthenticated(userCredential.user.uid);
+    } catch (err: any) {
+      console.error(err);
+      if (err?.code === "auth/email-already-in-use") {
+        setError("Este e-mail já está em uso por outra conta.");
+      } else if (err?.code === "auth/invalid-email") {
+        setError("O formato do e-mail inserido é inválido.");
+      } else if (err?.code === "auth/weak-password") {
+        setError("A senha escolhida é muito fraca. Digite pelo menos 6 caracteres.");
+      } else {
+        setError(err?.message || "Falha ao realizar cadastro. Tente novamente.");
       }
     } finally {
       setIsSubmitLoading(false);
@@ -154,6 +194,7 @@ export default function AuthGate({ onAuthenticated, onLogout }: AuthGateProps) {
     window.history.replaceState({}, document.title, window.location.pathname);
     setIsResetMode(false);
     setForgotPasswordActive(false);
+    setSignUpMode(false);
     setOobCode(null);
     setError(null);
     setInfo(null);
@@ -276,7 +317,9 @@ export default function AuthGate({ onAuthenticated, onLogout }: AuthGateProps) {
                   ? "Redefinir Senha" 
                   : forgotPasswordActive 
                     ? "Esqueci minha Senha" 
-                    : "Portal do Psicólogo"
+                    : signUpMode
+                      ? "Criar Conta Profissional"
+                      : "Portal do Psicólogo"
                 }
               </h2>
               
@@ -284,8 +327,10 @@ export default function AuthGate({ onAuthenticated, onLogout }: AuthGateProps) {
                 {isResetMode 
                   ? "Crie uma nova credencial robusta para assegurar seus dados clínicos" 
                   : forgotPasswordActive
-                    ? "Insera o seu e-mail de cadastro para receber as orientações de redefinição"
-                    : "Faça login com sua conta para acessar seu consultório e sincronizar confirmações na nuvem"
+                    ? "Insira o seu e-mail de cadastro para receber as orientações de redefinição"
+                    : signUpMode
+                      ? "Registre seu e-mail para gerenciar sua agenda, prontuários de pacientes e automações"
+                      : "Faça login com sua conta para acessar seu consultório e sincronizar confirmações na nuvem"
                 }
               </p>
             </div>
@@ -424,7 +469,7 @@ export default function AuthGate({ onAuthenticated, onLogout }: AuthGateProps) {
             )}
 
             {/* -------------------- ORDINARY LOGIN INPUTS -------------------- */}
-            {!isResetMode && !forgotPasswordActive && (
+            {!isResetMode && !forgotPasswordActive && !signUpMode && (
               <form onSubmit={handleLogin} className="space-y-4">
                 <div>
                   <label className="block text-xs font-black text-slate-700 uppercase tracking-wider">E-mail de acesso</label>
@@ -449,7 +494,7 @@ export default function AuthGate({ onAuthenticated, onLogout }: AuthGateProps) {
                     <button
                       type="button"
                       onClick={() => setForgotPasswordActive(true)}
-                      className="text-[11px] font-bold text-brand-primary hover:underline"
+                      className="text-[11px] font-bold text-brand-primary hover:underline hover:text-brand-primary/80 transition-all bg-transparent border-none cursor-pointer"
                     >
                       Esqueceu?
                     </button>
@@ -469,18 +514,18 @@ export default function AuthGate({ onAuthenticated, onLogout }: AuthGateProps) {
                     <button
                       type="button"
                       onClick={() => setShowPassword(!showPassword)}
-                      className="absolute inset-y-0 right-0 flex items-center pr-3 cursor-pointer text-slate-400 hover:text-brand-text"
+                      className="absolute inset-y-0 right-0 flex items-center pr-3 cursor-pointer text-slate-400 hover:text-brand-text border-none bg-transparent"
                     >
                       {showPassword ? <EyeOff className="h-3.5 w-3.5" /> : <Eye className="h-3.5 w-3.5" />}
                     </button>
                   </div>
                 </div>
 
-                <div className="pt-2">
+                <div className="pt-2 flex flex-col gap-4">
                   <button
                     type="submit"
                     disabled={isSubmitLoading}
-                    className="w-full rounded-xl bg-[#3A5A6B] py-3.5 px-4 text-sm font-black text-white hover:opacity-95 transition-opacity flex items-center justify-center gap-2 cursor-pointer shadow-md shadow-[#3A5A6B]/20"
+                    className="w-full rounded-xl bg-[#3A5A6B] py-3.5 px-4 text-sm font-black text-white hover:bg-[#2C4452] active:scale-[0.99] transition-all flex items-center justify-center gap-2 cursor-pointer shadow-md shadow-[#3A5A6B]/20"
                   >
                     {isSubmitLoading ? (
                       <>
@@ -493,6 +538,118 @@ export default function AuthGate({ onAuthenticated, onLogout }: AuthGateProps) {
                       </>
                     )}
                   </button>
+
+                  <div className="pt-4 border-t border-slate-100 flex flex-col items-center gap-2">
+                    <p className="text-xs text-slate-500 font-medium">Não possui uma conta no Confirma?</p>
+                    <button
+                      type="button"
+                      onClick={() => {
+                        setError(null);
+                        setInfo(null);
+                        setSignUpMode(true);
+                      }}
+                      className="inline-flex items-center gap-1.5 text-xs font-black text-[#3A5A6B] hover:text-[#2C4452] transition-colors hover:underline bg-transparent border-none cursor-pointer"
+                    >
+                      <UserPlus className="h-4 w-4" />
+                      <span>Cadastre-se Gratuitamente</span>
+                    </button>
+                  </div>
+                </div>
+              </form>
+            )}
+
+            {/* -------------------- SIGNUP / REGISTER INPUTS -------------------- */}
+            {!isResetMode && !forgotPasswordActive && signUpMode && (
+              <form onSubmit={handleSignUp} className="space-y-4">
+                <div>
+                  <label className="block text-xs font-black text-slate-700 uppercase tracking-wider">E-mail para Cadastro</label>
+                  <div className="relative mt-1.5">
+                    <span className="absolute inset-y-0 left-0 flex items-center pl-3.5 pointer-events-none text-slate-400">
+                      <Mail className="h-4 w-4" />
+                    </span>
+                    <input
+                      type="email"
+                      placeholder="seu_email@clinica.com"
+                      value={email}
+                      onChange={(e) => setEmail(e.target.value)}
+                      className="w-full rounded-xl border border-brand-border bg-white pl-10 pr-4 py-3 text-sm font-semibold outline-none focus:border-brand-primary focus:ring-4 focus:ring-brand-primary/10 transition-all text-brand-text placeholder-slate-400"
+                      required
+                    />
+                  </div>
+                </div>
+
+                <div>
+                  <label className="block text-xs font-black text-slate-700 uppercase tracking-wider">Crie uma Senha</label>
+                  <div className="relative mt-1.5">
+                    <span className="absolute inset-y-0 left-0 flex items-center pl-3.5 pointer-events-none text-slate-400">
+                      <Lock className="h-4 w-4" />
+                    </span>
+                    <input
+                      type={showPassword ? "text" : "password"}
+                      placeholder="Mínimo de 6 caracteres"
+                      value={password}
+                      onChange={(e) => setPassword(e.target.value)}
+                      className="w-full rounded-xl border border-brand-border bg-white pl-10 pr-10 py-3 text-sm font-semibold outline-none focus:border-brand-primary focus:ring-4 focus:ring-brand-primary/10 transition-all text-brand-text placeholder-slate-400"
+                      required
+                    />
+                    <button
+                      type="button"
+                      onClick={() => setShowPassword(!showPassword)}
+                      className="absolute inset-y-0 right-0 flex items-center pr-3 cursor-pointer text-slate-400 hover:text-brand-text border-none bg-transparent"
+                    >
+                      {showPassword ? <EyeOff className="h-3.5 w-3.5" /> : <Eye className="h-3.5 w-3.5" />}
+                    </button>
+                  </div>
+                </div>
+
+                <div>
+                  <label className="block text-xs font-black text-slate-700 uppercase tracking-wider">Confirme a Senha</label>
+                  <div className="relative mt-1.5">
+                    <span className="absolute inset-y-0 left-0 flex items-center pl-3.5 pointer-events-none text-slate-400">
+                      <Lock className="h-4 w-4" />
+                    </span>
+                    <input
+                      type={showPassword ? "text" : "password"}
+                      placeholder="Confirme sua senha de acesso"
+                      value={confirmPassword}
+                      onChange={(e) => setConfirmPassword(e.target.value)}
+                      className="w-full rounded-xl border border-brand-border bg-white pl-10 pr-10 py-3 text-sm font-semibold outline-none focus:border-brand-primary focus:ring-4 focus:ring-brand-primary/10 transition-all text-brand-text placeholder-slate-400"
+                      required
+                    />
+                  </div>
+                </div>
+
+                <div className="pt-2 flex flex-col gap-4">
+                  <button
+                    type="submit"
+                    disabled={isSubmitLoading}
+                    className="w-full rounded-xl bg-[#3A5A6B] py-3.5 px-4 text-sm font-black text-white hover:bg-[#2C4452] active:scale-[0.99] transition-all flex items-center justify-center gap-2 cursor-pointer shadow-md shadow-[#3A5A6B]/20"
+                  >
+                    {isSubmitLoading ? (
+                      <>
+                        <Loader2 className="h-4 w-4 animate-spin" /> Cadastrando...
+                      </>
+                    ) : (
+                      <>
+                        <span>Criar Minha Conta Grátis</span>
+                        <ChevronRight className="h-4 w-4 mt-0.5" />
+                      </>
+                    )}
+                  </button>
+
+                  <div className="pt-4 border-t border-slate-100 flex flex-col items-center">
+                    <button
+                      type="button"
+                      onClick={() => {
+                        setError(null);
+                        setInfo(null);
+                        setSignUpMode(false);
+                      }}
+                      className="text-xs text-[#3A5A6B] hover:text-[#2C4452] transition-colors font-bold hover:underline bg-transparent border-none cursor-pointer"
+                    >
+                      Já possui acesso? Faça Login
+                    </button>
+                  </div>
                 </div>
               </form>
             )}

@@ -27,7 +27,10 @@ import {
   DollarSign,
   Bot,
   Sparkles,
-  FileDown
+  FileDown,
+  CreditCard,
+  ShieldCheck,
+  ArrowLeft
 } from "lucide-react";
 
 import { auth, db, handleFirestoreError } from "./firebase";
@@ -93,6 +96,19 @@ export default function App() {
     "dashboard" | "today" | "agenda" | "sessions" | "patients" | "financial" | "risk" | "retention" | "waiting" | "automations" | "ai_chat" | "reports" | "settings"
   >("dashboard");
   const [selectedPatientProfile, setSelectedPatientProfile] = useState<Patient | null>(null);
+
+  // Stripe & Premium integration states
+  const [isPaid, setIsPaid] = useState<boolean>(false); // Initialized to false, loaded from Firestore
+  const [stripeConfigured, setStripeConfigured] = useState<boolean>(false);
+  const [checkoutLoading, setCheckoutLoading] = useState<boolean>(false);
+  const [showSimulatedCheckout, setShowSimulatedCheckout] = useState<boolean>(false);
+  const [simulatedPaymentMethod, setSimulatedPaymentMethod] = useState<"card" | "pix">("card");
+  const [simulatedCardName, setSimulatedCardName] = useState<string>("");
+  const [simulatedCardNumber, setSimulatedCardNumber] = useState<string>("");
+  const [simulatedCardExpiry, setSimulatedCardExpiry] = useState<string>("");
+  const [simulatedCardCvv, setSimulatedCardCvv] = useState<string>("");
+  const [simulatedPixCopied, setSimulatedPixCopied] = useState<boolean>(false);
+  const [simulatedPaymentProcessing, setSimulatedPaymentProcessing] = useState<boolean>(false);
   const [profileInitialSubTab, setProfileInitialSubTab] = useState<"dados" | "historico" | "financeiro" | "formularios" | "prontuario" | "insights" | null>(null);
   const [profileInitialOccurrence, setProfileInitialOccurrence] = useState<Occurrence | null>(null);
   const [isSidebarOpen, setIsSidebarOpen] = useState(false);
@@ -217,6 +233,9 @@ export default function App() {
           const cloudDoc = await getDoc(doc(db, "users", user.uid));
           if (cloudDoc.exists()) {
             const data = cloudDoc.data();
+            const loadedIsPaid = data && data.isPaid !== undefined ? !!data.isPaid : false;
+            setIsPaid(loadedIsPaid);
+            
             if (data && data.state) {
               const cloudState: AppState = {
                 patients: data.state.patients || [],
@@ -238,6 +257,7 @@ export default function App() {
             }
           } else {
             // First time user on cloud - deploy local state if they had cached records
+            setIsPaid(false);
             setState(initialData);
             await saveToFirestore(user.uid, initialData);
           }
@@ -257,6 +277,7 @@ export default function App() {
         }
       } else {
         setUserId(null);
+        setIsPaid(false);
         setState(getInitialState());
       }
       setInitializing(false);
@@ -264,8 +285,92 @@ export default function App() {
     return () => unsubscribe();
   }, []);
 
+  // Check Stripe Configuration on load
+  useEffect(() => {
+    fetch("/api/stripe/config")
+      .then((res) => res.json())
+      .then((data) => {
+        setStripeConfigured(!!data.stripeConfigured);
+      })
+      .catch((err) => console.warn("Failed to check Stripe integration info", err));
+  }, []);
+
+  // Handle successful redirects from paywall/stripe checkout
+  useEffect(() => {
+    const params = new URLSearchParams(window.location.search);
+    const success = params.get("success");
+    const simulatedSuccess = params.get("simulated_success");
+
+    if ((success || simulatedSuccess) && userId) {
+      setIsPaid(true);
+
+      const userDocRef = doc(db, "users", userId);
+      setDoc(userDocRef, { isPaid: true, paidAt: serverTimestamp() }, { merge: true })
+        .then(() => {
+          console.log("Salvo user status como pago no firestore do cliente.");
+        })
+        .catch((err) => console.error("Falha ao salvar status pago no firestore:", err));
+
+      const cleanUrl = window.location.protocol + "//" + window.location.host + window.location.pathname;
+      window.history.replaceState({ path: cleanUrl }, "", cleanUrl);
+
+      alert("Parabéns! O seu plano Vitalício Premium do Confirma foi ativado com sucesso! Aproveite todos os recursos ilimitados ❤️");
+    }
+  }, [userId]);
+
+  // Create Stripe Checkout Session helper
+  const handleCreateCheckout = async () => {
+    if (!userId) {
+      alert("Por favor, faça login antes de realizar o pagamento.");
+      return;
+    }
+
+    if (!stripeConfigured) {
+      // Abriremos a nossa própria página premium de checkout visual perfeitamente integrada!
+      setShowSimulatedCheckout(true);
+      return;
+    }
+
+    setCheckoutLoading(true);
+    try {
+      const response = await fetch("/api/stripe/create-checkout-session", {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+        },
+        body: JSON.stringify({
+          userId: userId,
+          email: auth.currentUser?.email || "",
+        }),
+      });
+
+      const data = await response.json();
+      if (response.ok && data.url) {
+        // Abre o checkout em outra página/aba, conforme solicitado pelo usuário!
+        const checkoutWindow = window.open(data.url, "_blank");
+        if (!checkoutWindow || checkoutWindow.closed || typeof checkoutWindow.closed === "undefined") {
+          // Se o navegador ou iframe bloquear o popup, redireciona na mesma página
+          window.location.href = data.url;
+        }
+      } else {
+        setShowSimulatedCheckout(true);
+      }
+    } catch (err: any) {
+      console.warn("Stripe call error, abrindo simulador visivel:", err);
+      setShowSimulatedCheckout(true);
+    } finally {
+      setCheckoutLoading(false);
+    }
+  };
+
   // Save changes triggers local storage immediately and debounces firestore sync
   const updateState = (updater: (prev: AppState) => AppState) => {
+    if (!isPaid) {
+      alert("Acesso Limitado à Visualização: Por favor, ative seu Plano Vitalício Premium nas Definições para liberar o cadastro, alteração e salvamento de dados!");
+      setActiveTab("settings");
+      setShowSimulatedCheckout(true);
+      return;
+    }
     setState((prev) => {
       const next = updater(prev);
       localStorage.setItem("confirma_v4", JSON.stringify(next));
@@ -361,6 +466,12 @@ export default function App() {
   // Create Patient Process
   const handleCreatePatient = (e: React.FormEvent) => {
     e.preventDefault();
+    if (!isPaid) {
+      alert("Modo de Visualização: A ativação da sua assinatura Premium é necessária para cadastrar novos pacientes.");
+      setActiveTab("settings");
+      setShowSimulatedCheckout(true);
+      return;
+    }
     const name = newPatientName.trim();
     const phone = normalizePhone(newPatientPhone.trim());
 
@@ -392,6 +503,12 @@ export default function App() {
 
   // Saved Session Process (Create or Update)
   const handleSaveSession = (draft: Omit<Session, "id" | "createdAt">) => {
+    if (!isPaid) {
+      alert("Modo de Visualização: A ativação da sua assinatura Premium é necessária para agendar ou alterar consultas.");
+      setActiveTab("settings");
+      setShowSimulatedCheckout(true);
+      return;
+    }
     if (editingSession) {
       updateState((prev) => ({
         ...prev,
@@ -423,6 +540,12 @@ export default function App() {
 
   // Delete Session and remove its statuses
   const handleDeleteSession = (id: string) => {
+    if (!isPaid) {
+      alert("Modo de Visualização: A ativação da sua assinatura Premium é necessária para excluir agendamentos.");
+      setActiveTab("settings");
+      setShowSimulatedCheckout(true);
+      return;
+    }
     updateState((prev) => {
       // filters other statuses
       const nextStatuses = { ...prev.statuses };
@@ -454,6 +577,12 @@ export default function App() {
 
   // Save changes of patient info or core creation
   const handleSavePatientEdit = (patientData: Partial<Patient>) => {
+    if (!isPaid) {
+      alert("Modo de Visualização: A ativação da sua assinatura Premium é necessária para salvar prontuários ou cadastrar pacientes.");
+      setActiveTab("settings");
+      setShowSimulatedCheckout(true);
+      return;
+    }
     const rawPhone = patientData.phone || "";
     const cleanPhone = normalizePhone(rawPhone);
 
@@ -506,6 +635,12 @@ export default function App() {
 
   // Delete patient alongside all sessions associated
   const handleDeletePatient = () => {
+    if (!isPaid) {
+      alert("Modo de Visualização: A ativação da sua assinatura Premium é necessária para excluir pacientes.");
+      setActiveTab("settings");
+      setShowSimulatedCheckout(true);
+      return;
+    }
     if (!editingPatient) return;
     const pId = editingPatient.id;
 
@@ -541,6 +676,12 @@ export default function App() {
 
   // Real-time Status updates for occurrences
   const handleStatusChange = (key: string, newStatus: string) => {
+    if (!isPaid) {
+      alert("Modo de Visualização: A ativação da sua assinatura Premium é necessária para marcar presenças ou faltas.");
+      setActiveTab("settings");
+      setShowSimulatedCheckout(true);
+      return;
+    }
     updateState((prev) => ({
       ...prev,
       statuses: {
@@ -552,6 +693,12 @@ export default function App() {
 
   // Save Standard Template Edits
   const handleSaveTplConfirmDefault = (text: string) => {
+    if (!isPaid) {
+      alert("Modo de Visualização: A ativação da sua assinatura Premium é necessária para alterar templates.");
+      setActiveTab("settings");
+      setShowSimulatedCheckout(true);
+      return;
+    }
     const cleaned = sanitizeMessage(text);
     if (!cleaned) {
       alert("A mensagem de confirmação padrão não pode ficar vazia.");
@@ -568,6 +715,12 @@ export default function App() {
   };
 
   const handleSaveTplReforco = (text: string) => {
+    if (!isPaid) {
+      alert("Modo de Visualização: A ativação da sua assinatura Premium é necessária para alterar templates.");
+      setActiveTab("settings");
+      setShowSimulatedCheckout(true);
+      return;
+    }
     const cleaned = sanitizeMessage(text);
     if (!cleaned) {
       alert("A mensagem de reforço não pode ficar vazia.");
@@ -584,6 +737,12 @@ export default function App() {
   };
 
   const handleSaveTplSemResposta = (text: string) => {
+    if (!isPaid) {
+      alert("Modo de Visualização: A ativação da sua assinatura Premium é necessária para alterar templates.");
+      setActiveTab("settings");
+      setShowSimulatedCheckout(true);
+      return;
+    }
     const cleaned = sanitizeMessage(text);
     if (!cleaned) {
       alert("A mensagem de sem resposta não pode ficar vazia.");
@@ -602,6 +761,12 @@ export default function App() {
   // Add Custom Confirmation Template Options
   const handleAddCustomTemplate = (e: React.FormEvent) => {
     e.preventDefault();
+    if (!isPaid) {
+      alert("Modo de Visualização: A ativação da sua assinatura Premium é necessária para criar templates personalizados.");
+      setActiveTab("settings");
+      setShowSimulatedCheckout(true);
+      return;
+    }
     const name = newTplName.trim();
     const rawText = newTplText.trim();
 
@@ -633,6 +798,12 @@ export default function App() {
 
   // Delete Custom Confirmation Template Option
   const handleDeleteCustomTemplate = (id: string) => {
+    if (!isPaid) {
+      alert("Modo de Visualização: A ativação da sua assinatura Premium é necessária para excluir templates.");
+      setActiveTab("settings");
+      setShowSimulatedCheckout(true);
+      return;
+    }
     updateState((prev) => ({
       ...prev,
       customConfirmTemplates: (prev.customConfirmTemplates || []).filter((t) => t.id !== id),
@@ -661,6 +832,12 @@ export default function App() {
   };
 
   const handleImportBackup = (e: React.ChangeEvent<HTMLInputElement>) => {
+    if (!isPaid) {
+      alert("Modo de Visualização: A ativação da sua assinatura Premium é necessária para importar backups.");
+      setActiveTab("settings");
+      setShowSimulatedCheckout(true);
+      return;
+    }
     const file = e.target.files?.[0];
     if (!file) return;
 
@@ -699,6 +876,12 @@ export default function App() {
 
   // Restore Default Templates
   const handleResetTemplate = (key: keyof typeof defaultTemplates) => {
+    if (!isPaid) {
+      alert("Modo de Visualização: A ativação da sua assinatura Premium é necessária para redefinir templates.");
+      setActiveTab("settings");
+      setShowSimulatedCheckout(true);
+      return;
+    }
     if (confirm("Deseja redefinir este template para o conteúdo original?")) {
       updateState((prev) => ({
         ...prev,
@@ -937,6 +1120,12 @@ export default function App() {
           <div className="flex items-center gap-3">
             <button
               onClick={() => {
+                if (!isPaid) {
+                  alert("Modo de Visualização: A ativação da sua assinatura Premium é necessária para criar novos agendamentos.");
+                  setActiveTab("settings");
+                  setShowSimulatedCheckout(true);
+                  return;
+                }
                 setEditingSession(null);
                 setIsSessionModalOpen(true);
               }}
@@ -951,6 +1140,35 @@ export default function App() {
         {/* COMPONENT VIEWS PORTAL */}
         <div className="flex-1 overflow-y-auto p-4 sm:p-6 md:p-8 max-w-[1240px] w-full mx-auto">
           <main className="space-y-4">
+
+            {!isPaid && (
+              <div id="read_only_banner" className="bg-amber-50 border border-amber-200 rounded-2xl p-4 flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3 shadow-xs text-left animate-in fade-in slide-in-from-top-4 duration-300">
+                <div className="flex items-start gap-4">
+                  <div className="p-2 rounded-xl bg-amber-100 text-amber-800 shrink-0 mt-0.5">
+                    <AlertTriangle className="h-5 w-5" />
+                  </div>
+                  <div>
+                    <h4 className="text-xs font-black text-amber-950 uppercase tracking-wider mb-0.5 flex items-center gap-1.5">
+                      <span>Modo de Visualização Ativo</span>
+                      <span className="px-1.5 py-0.5 bg-amber-200 text-amber-900 rounded text-[9px] font-bold">Assinatura Inativa</span>
+                    </h4>
+                    <p className="text-xs text-amber-850 leading-relaxed font-semibold">
+                      Sua conta do <strong className="text-amber-900">Confirma</strong> não possui o plano ativo. Você pode visualizar e navegar pelo sistema livremente, mas todos os recursos de agendamento, cadastro, prontuários, automações e IA estão protegidos contra edições ou novas inserções. Ative seu plano premium para liberar todas as funções.
+                    </p>
+                  </div>
+                </div>
+                <button
+                  onClick={() => {
+                    setActiveTab("settings");
+                    setShowSimulatedCheckout(true);
+                  }}
+                  className="inline-flex items-center gap-1 bg-[#3A5A6B] hover:bg-[#2C4452] text-white font-black text-xs px-4 py-2.5 rounded-xl cursor-pointer shadow-xs transition-all shrink-0 uppercase tracking-wider border-none self-start sm:self-auto"
+                >
+                  <Sparkles className="h-3.5 w-3.5 animate-pulse text-amber-200" />
+                  <span>Ativar Plano Vitalício</span>
+                </button>
+              </div>
+            )}
 
             {/* TAB DASHBOARD */}
             {activeTab === "dashboard" && (
@@ -1047,6 +1265,12 @@ export default function App() {
               }
             }}
             onAddSessionAt={(date, time) => {
+              if (!isPaid) {
+                alert("Modo de Visualização: A ativação da sua assinatura Premium é necessária para criar novos agendamentos.");
+                setActiveTab("settings");
+                setShowSimulatedCheckout(true);
+                return;
+              }
               setSessionModalInitialDate(date);
               setSessionModalInitialTime(time);
               setIsSessionModalOpen(true);
@@ -1163,6 +1387,12 @@ export default function App() {
                 <button
                   type="button"
                   onClick={() => {
+                    if (!isPaid) {
+                      alert("Modo de Visualização: A ativação da sua assinatura Premium é necessária para cadastrar novos pacientes.");
+                      setActiveTab("settings");
+                      setShowSimulatedCheckout(true);
+                      return;
+                    }
                     setEditingPatient(null);
                     setIsPatientModalOpen(true);
                   }}
@@ -1339,6 +1569,12 @@ export default function App() {
             today={today}
             onWaOpen={openWa}
             onScheduleReturn={(pId) => {
+              if (!isPaid) {
+                alert("Modo de Visualização: A ativação da sua assinatura Premium é necessária para agendar novos retornos.");
+                setActiveTab("settings");
+                setShowSimulatedCheckout(true);
+                return;
+              }
               setEditingSession(null);
               setSessionModalInitialPatientId(pId);
               setIsSessionModalOpen(true);
@@ -1375,26 +1611,492 @@ export default function App() {
 
         {/* TAB ASSISTENTE DE IA ADMINISTRATIVO (Módulo 9) */}
         {activeTab === "ai_chat" && (
-          <AIChatTab
-            state={state}
-            occurrences={occurrences}
-            today={today}
-          />
+          !isPaid ? (
+            <div className="max-w-2xl mx-auto rounded-2xl border border-brand-border bg-white p-8 text-center space-y-6 shadow-xs">
+              <div className="w-16 h-16 bg-brand-primary/10 rounded-full flex items-center justify-center mx-auto text-brand-primary text-3xl">✨</div>
+              <div className="space-y-2">
+                <h3 className="text-xl font-black text-brand-text">Assistente de IA Administrativo</h3>
+                <p className="text-sm text-brand-muted max-w-md mx-auto leading-relaxed">
+                  Gere análises de clínicas, respostas inteligentes de whatsapp e planos estratégicos baseados em IA.
+                </p>
+                <div className="inline-flex items-center gap-1.5 px-3 py-1 rounded-full bg-amber-50 border border-amber-200 text-amber-800 text-xs font-black">
+                  ⭐ Funcionalidade Exclusiva Premium
+                </div>
+              </div>
+              <div className="p-4 bg-slate-50 rounded-xl space-y-3 text-left max-w-md mx-auto text-xs text-brand-muted leading-relaxed">
+                <div className="flex items-center gap-2"><span className="text-emerald-500 font-bold">✓</span> Auditoria automatizada de perdas financeiras</div>
+                <div className="flex items-center gap-2"><span className="text-emerald-500 font-bold">✓</span> Insights de risco de abandono de pacientes</div>
+                <div className="flex items-center gap-2"><span className="text-emerald-500 font-bold">✓</span> Sugestão de agendamento reativo otimizado por IA</div>
+              </div>
+              <button
+                onClick={() => setActiveTab("settings")}
+                className="inline-flex items-center justify-center gap-2 rounded-xl bg-brand-primary hover:bg-brand-primary/95 px-6 py-3 text-sm font-black text-white cursor-pointer shadow-md w-full max-w-xs transition-all"
+              >
+                Ativar Acesso Vitalício
+              </button>
+            </div>
+          ) : (
+            <AIChatTab
+              state={state}
+              occurrences={occurrences}
+              today={today}
+            />
+          )
         )}
 
         {/* TAB GERADOR DE RELATÓRIOS (Módulo 10) */}
         {activeTab === "reports" && (
-          <ReportsTab
-            state={state}
-            occurrences={occurrences}
-            today={today}
-          />
+          !isPaid ? (
+            <div className="max-w-2xl mx-auto rounded-2xl border border-brand-border bg-white p-8 text-center space-y-6 shadow-xs">
+              <div className="w-16 h-16 bg-emerald-50 rounded-full flex items-center justify-center mx-auto text-emerald-600 text-3xl">📊</div>
+              <div className="space-y-2">
+                <h3 className="text-xl font-black text-brand-text">Gerador de Relatórios Clínicos</h3>
+                <p className="text-sm text-brand-muted max-w-md mx-auto leading-relaxed">
+                  Exporte relatórios financeiros de receitas, histórico completo de agendas e auditorias de clínica.
+                </p>
+                <div className="inline-flex items-center gap-1.5 px-3 py-1 rounded-full bg-amber-50 border border-amber-200 text-amber-800 text-xs font-black">
+                  ⭐ Funcionalidade Exclusiva Premium
+                </div>
+              </div>
+              <div className="p-4 bg-slate-50 rounded-xl space-y-3 text-left max-w-md mx-auto text-xs text-brand-muted leading-relaxed">
+                <div className="flex items-center gap-2"><span className="text-emerald-500 font-bold">✓</span> Exportação de balancetes mensais em CSV/XLS</div>
+                <div className="flex items-center gap-2"><span className="text-emerald-500 font-bold">✓</span> Relatórios de produtividade clínica</div>
+                <div className="flex items-center gap-2"><span className="text-emerald-500 font-bold">✓</span> Auditoria completa de faturamento</div>
+              </div>
+              <button
+                onClick={() => setActiveTab("settings")}
+                className="inline-flex items-center justify-center gap-2 rounded-xl bg-brand-primary hover:bg-brand-primary/95 px-6 py-3 text-sm font-black text-white cursor-pointer shadow-md w-full max-w-xs transition-all"
+              >
+                Ativar Acesso Vitalício
+              </button>
+            </div>
+          ) : (
+            <ReportsTab
+              state={state}
+              occurrences={occurrences}
+              today={today}
+            />
+          )
         )}
 
         {/* TAB DEFINIÇÕES: TEMPLATES + BACKUPS (Módulo 11) */}
         {activeTab === "settings" && (
-          <section className="max-w-2xl mx-auto leading-relaxed space-y-4">
-            
+          showSimulatedCheckout ? (
+            <div className="max-w-4xl mx-auto bg-white rounded-3xl border border-brand-border shadow-md overflow-hidden animate-in fade-in slide-in-from-bottom-4 duration-300 mb-8">
+              {/* Header */}
+              <div className="border-b border-brand-border bg-slate-50 px-6 py-5 flex items-center justify-between">
+                <button
+                  onClick={() => setShowSimulatedCheckout(false)}
+                  className="inline-flex items-center gap-2 text-xs font-black text-brand-primary hover:opacity-85 transition-all cursor-pointer"
+                >
+                  <ArrowLeft className="h-4 w-4" />
+                  <span>Voltar para Definições</span>
+                </button>
+                <div className="flex items-center gap-1.5 text-brand-primary">
+                  <ShieldCheck className="h-5 w-5 text-brand-primary" />
+                  <span className="text-xs font-bold text-brand-muted">Ativação Segura • Premium</span>
+                </div>
+              </div>
+
+              {/* Simulated Loading State */}
+              {simulatedPaymentProcessing ? (
+                <div className="p-12 text-center flex flex-col items-center justify-center min-h-[450px] space-y-6">
+                  <div className="w-16 h-16 border-4 border-brand-primary/20 border-t-brand-primary rounded-full animate-spin"></div>
+                  <div className="space-y-2">
+                    <h3 className="text-lg font-black text-brand-text">Processando sua ativação...</h3>
+                    <p className="text-xs text-brand-muted max-w-xs mx-auto">
+                      Estamos enviando seu token de segurança e liberando seu acesso profissional completo.
+                    </p>
+                  </div>
+                </div>
+              ) : (
+                <div className="grid grid-cols-1 md:grid-cols-12 md:divide-x md:divide-brand-border">
+                  {/* Left Column: Order Summary */}
+                  <div className="md:col-span-12 lg:col-span-5 bg-slate-50/50 p-6 sm:p-8 space-y-6">
+                    <div className="space-y-1.5">
+                      <span className="text-[10px] font-black tracking-widest text-[#3A5A6B] uppercase block">CHECKOUT DO CONFIRMA</span>
+                      <h2 className="text-lg font-black text-brand-text">Resumo do Pedido</h2>
+                    </div>
+
+                    {/* Receipt Item */}
+                    <div className="p-4 rounded-2xl border border-brand-border bg-white space-y-3.5">
+                      <div className="flex items-start justify-between gap-2 border-b border-brand-border pb-3">
+                        <div>
+                          <p className="font-black text-xs text-brand-text">Confirma Premium</p>
+                          <p className="text-[11px] text-brand-muted mt-0.5">Acesso Premium Vitalício</p>
+                        </div>
+                        <span className="font-extrabold text-[#3a5a6b] text-xs">R$ 99,90</span>
+                      </div>
+                      <div className="flex items-center justify-between text-xs font-bold text-brand-text">
+                        <span>Investimento Único:</span>
+                        <span className="text-base font-black text-[#3a5a6b]">R$ 99,90</span>
+                      </div>
+                    </div>
+
+                    {/* Features included list */}
+                    <div className="space-y-3.5 pt-2">
+                      <p className="text-[10px] font-black text-brand-muted uppercase tracking-wider">Benefícios inclusos:</p>
+                      <ul className="space-y-2.5 text-xs text-brand-muted">
+                        <li className="flex items-start gap-2">
+                          <span className="text-[#3A5A6B] font-bold select-none">✓</span>
+                          <span><strong>Pacientes & Prontuários Ilimitados</strong>: organize toda a sua carreira sem nenhum limite de cadastro mensal.</span>
+                        </li>
+                        <li className="flex items-start gap-2">
+                          <span className="text-[#3A5A6B] font-bold select-none">✓</span>
+                          <span><strong>Assistente IA Clínico Premium</strong>: gere resumos de prontuários e respostas inteligentes de WhatsApp.</span>
+                        </li>
+                        <li className="flex items-start gap-2">
+                          <span className="text-[#3A5A6B] font-bold select-none">✓</span>
+                          <span><strong>Exportador Completo</strong>: baixe relatórios financeiros consolidado em CSV ou XLSX para contabilidade.</span>
+                        </li>
+                      </ul>
+                    </div>
+
+                    <div className="p-4 bg-[#EBF5FF] rounded-2xl border border-[#BFDBFE] text-xs text-[#1E40AF] flex gap-2.5">
+                      <span className="text-sm">🛡️</span>
+                      <p className="leading-snug font-medium">
+                        <strong>Garantia Premium:</strong> 7 dias para testar todos os recursos! Reembolso automático caso mude de ideia.
+                      </p>
+                    </div>
+                  </div>
+
+                  {/* Right Column: Payments Gateway */}
+                  <div className="md:col-span-12 lg:col-span-7 p-6 sm:p-8 space-y-6 bg-white">
+                    <div className="space-y-1">
+                      <h3 className="text-base font-black text-brand-text">Dados de Pagamento</h3>
+                      <p className="text-xs text-brand-muted">Escolha o seu método preferido para simular a adesão premium de R$ 99,90.</p>
+                    </div>
+
+                    {/* Payment methods toggler */}
+                    <div className="grid grid-cols-2 p-1 bg-slate-100 rounded-xl border border-slate-200">
+                      <button
+                        onClick={() => setSimulatedPaymentMethod("card")}
+                        className={`flex items-center justify-center gap-1.5 py-2 rounded-lg text-xs font-black transition-all cursor-pointer ${
+                          simulatedPaymentMethod === "card"
+                            ? "bg-white text-brand-text shadow-xs"
+                            : "text-brand-muted hover:text-slate-800"
+                        }`}
+                      >
+                        <CreditCard className="h-4 w-4" />
+                        <span>Cartão de Crédito</span>
+                      </button>
+                      <button
+                        onClick={() => setSimulatedPaymentMethod("pix")}
+                        className={`flex items-center justify-center gap-1.5 py-2 rounded-lg text-xs font-black transition-all cursor-pointer ${
+                          simulatedPaymentMethod === "pix"
+                            ? "bg-white text-brand-text shadow-xs"
+                            : "text-brand-muted hover:text-slate-800"
+                        }`}
+                      >
+                        <span className="text-xs">⚡</span>
+                        <span>Pix Copia e Cola</span>
+                      </button>
+                    </div>
+
+                    {/* CARD OPTION */}
+                    {simulatedPaymentMethod === "card" && (
+                      <div className="space-y-5 animate-in fade-in duration-200">
+                        {/* Interactive Vector Credit Card */}
+                        <div className="relative rounded-2xl bg-gradient-to-br from-[#3A5A6B] to-[#1E2E38] text-white p-5 shadow-sm overflow-hidden aspect-[1.58/1] max-w-[310px] mx-auto select-none">
+                          <div className="flex justify-between items-start">
+                            <span className="text-[9px] font-black uppercase tracking-widest text-slate-300">CONFIRMA PRO</span>
+                            <div className="w-8 h-4.5 bg-white/20 rounded-xs flex items-center justify-center">
+                              <div className="w-1.5 h-3 bg-white/10 rounded-xs mx-0.5"></div>
+                            </div>
+                          </div>
+
+                          <div className="mt-5">
+                            <p className="font-mono text-sm tracking-widest text-center font-bold text-slate-100">
+                              {simulatedCardNumber || "•••• •••• •••• ••••"}
+                            </p>
+                          </div>
+
+                          <div className="mt-5 flex justify-between items-end border-t border-white/10 pt-2 bg-transparent text-left">
+                            <div>
+                              <p className="text-[7px] text-slate-300 uppercase tracking-widest leading-none">Titular</p>
+                              <p className="font-medium text-[10px] truncate max-w-[170px] uppercase text-white mt-0.5">
+                                {simulatedCardName || "NOME DO CLIENTE"}
+                              </p>
+                            </div>
+                            <div className="text-right">
+                              <p className="text-[7px] text-slate-300 uppercase tracking-widest leading-none">Validade</p>
+                              <p className="font-mono text-[10px] text-white mt-0.5">{simulatedCardExpiry || "MM/AA"}</p>
+                            </div>
+                          </div>
+                        </div>
+
+                        {/* Card Form fields */}
+                        <div className="space-y-3 text-left">
+                          <div>
+                            <label className="block text-[9px] font-black text-brand-muted uppercase mb-1">Nome Completo (como no cartão)</label>
+                            <input
+                              type="text"
+                              value={simulatedCardName}
+                              onChange={(e) => setSimulatedCardName(e.target.value)}
+                              placeholder="AMANDA S PAIVA"
+                              className="w-full text-xs rounded-xl border border-brand-border bg-slate-50/50 px-3 py-2 text-brand-text uppercase focus:outline-none focus:border-brand-primary"
+                            />
+                          </div>
+                          <div>
+                            <label className="block text-[9px] font-black text-brand-muted uppercase mb-1">Número do Cartão</label>
+                            <input
+                              type="text"
+                              maxLength={19}
+                              value={simulatedCardNumber}
+                              onChange={(e) => {
+                                let val = e.target.value.replace(/\s+/g, "").replace(/[^0-9]/gi, "");
+                                let formatted = val.match(/.{1,4}/g)?.join(" ") || val;
+                                setSimulatedCardNumber(formatted);
+                              }}
+                              placeholder="4123 4567 8901 2345"
+                              className="w-full text-xs rounded-xl border border-brand-border bg-slate-50/50 px-3 py-2 text-brand-text focus:outline-none focus:border-brand-primary"
+                            />
+                          </div>
+                          <div className="grid grid-cols-2 gap-3">
+                            <div>
+                              <label className="block text-[9px] font-black text-brand-muted uppercase mb-1">Validade (MM/AA)</label>
+                              <input
+                                type="text"
+                                maxLength={5}
+                                value={simulatedCardExpiry}
+                                onChange={(e) => {
+                                  let val = e.target.value.replace(/[^0-9]/gi, "");
+                                  if (val.length >= 2) {
+                                    setSimulatedCardExpiry(val.substring(0, 2) + "/" + val.substring(2, 4));
+                                  } else {
+                                    setSimulatedCardExpiry(val);
+                                  }
+                                }}
+                                placeholder="12/28"
+                                className="w-full text-xs rounded-xl border border-brand-border bg-slate-50/50 px-3 py-2 text-brand-text focus:outline-none focus:border-brand-primary"
+                              />
+                            </div>
+                            <div>
+                              <label className="block text-[9px] font-black text-brand-muted uppercase mb-1">Código CVV</label>
+                              <input
+                                type="text"
+                                maxLength={4}
+                                value={simulatedCardCvv}
+                                onChange={(e) => setSimulatedCardCvv(e.target.value.replace(/[^0-9]/gi, ""))}
+                                placeholder="123"
+                                className="w-full text-xs rounded-xl border border-brand-border bg-slate-50/50 px-3 py-2 text-brand-text focus:outline-none focus:border-brand-primary"
+                              />
+                            </div>
+                          </div>
+                        </div>
+
+                        <button
+                          onClick={async () => {
+                            if (!simulatedCardName || !simulatedCardNumber || !simulatedCardExpiry || !simulatedCardCvv) {
+                              alert("Por favor, preencha todos os campos do cartão para processar seu checkout!");
+                              return;
+                            }
+                            setSimulatedPaymentProcessing(true);
+                            setTimeout(() => {
+                              if (userId) {
+                                const userDocRef = doc(db, "users", userId);
+                                setDoc(userDocRef, { isPaid: true, paidAt: serverTimestamp() }, { merge: true })
+                                  .then(() => {
+                                    setIsPaid(true);
+                                    setShowSimulatedCheckout(false);
+                                    setSimulatedPaymentProcessing(false);
+                                    alert("Sucesso! Pagamento simulado com cartão de crédito aprovado com sucesso! Plano Vitalício ATIVADO! ❤️");
+                                  })
+                                  .catch((err) => {
+                                    console.error(err);
+                                    setSimulatedPaymentProcessing(false);
+                                  });
+                              }
+                            }, 1800);
+                          }}
+                          className="w-full inline-flex items-center justify-center gap-2 rounded-xl bg-[#3A5A6B] hover:bg-[#2C4452] text-white font-black text-xs px-5 py-3 cursor-pointer shadow-xs transition-all uppercase tracking-wider mt-2"
+                        >
+                          <span>Ativar com Cartão • R$ 99,90</span>
+                          <ShieldCheck className="h-4 w-4" />
+                        </button>
+                      </div>
+                    )}
+
+                    {/* PIX OPTION */}
+                    {simulatedPaymentMethod === "pix" && (
+                      <div className="space-y-5 animate-in fade-in duration-200 text-center">
+                        <div className="p-2.5 bg-emerald-50 rounded-xl border border-emerald-100 flex items-center justify-center gap-2 mx-auto max-w-[260px]">
+                          <span className="relative flex h-2 w-2">
+                            <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-emerald-400 opacity-75"></span>
+                            <span className="relative inline-flex rounded-full h-2 w-2 bg-emerald-500"></span>
+                          </span>
+                          <span className="text-[9px] text-[#006652] font-black uppercase tracking-wide">Código Pix Ativo Aguardando Pagamento</span>
+                        </div>
+
+                        {/* Pix QR Code Mockup */}
+                        <div className="bg-slate-50 rounded-2xl p-4 border border-brand-border max-w-[170px] mx-auto flex flex-col items-center">
+                          <div className="w-28 h-28 bg-slate-900 rounded-lg p-2 flex flex-wrap gap-1 relative overflow-hidden select-none">
+                            <div className="w-8 h-8 border-3 border-white rounded-md bg-transparent absolute top-2 left-2"></div>
+                            <div className="w-8 h-8 border-3 border-white rounded-md bg-transparent absolute top-2 right-2"></div>
+                            <div className="w-8 h-8 border-3 border-white rounded-md bg-transparent absolute bottom-2 left-2"></div>
+                            <div className="w-full h-full opacity-60 flex flex-wrap gap-1">
+                              {Array.from({ length: 48 }).map((_, i) => (
+                                <div key={i} className={`w-2 h-2 rounded-[0.5px] ${i % 3 === 0 ? "bg-white" : "bg-transparent"}`}></div>
+                              ))}
+                            </div>
+                          </div>
+                          <span className="text-[10px] text-brand-muted font-bold mt-2 font-mono">PIX TOTAL: R$ 99,90</span>
+                        </div>
+
+                        {/* Copy and paste section */}
+                        <div className="space-y-2">
+                          <p className="text-xs text-brand-muted">Copie o código Copia e Cola abaixo para pagar no app do seu banco:</p>
+                          <div className="flex items-center gap-1.5 p-2 rounded-xl border border-brand-border bg-slate-50 font-mono text-[9px] text-brand-muted text-left max-w-sm mx-auto overflow-hidden relative font-medium">
+                            <span className="truncate pr-12 text-slate-500">00020101021226830014br.gov.bcb.pix2561pix.api.pagamentos.confirma_vitalicio.status_pending</span>
+                            <button
+                              onClick={() => {
+                                navigator.clipboard.writeText("00020101021226830014br.gov.bcb.pix2561pix.api.pagamentos.confirma_vitalicio.status_pending");
+                                setSimulatedPixCopied(true);
+                                setTimeout(() => setSimulatedPixCopied(false), 2000);
+                              }}
+                              className="absolute right-1 top-1/2 -translate-y-1/2 px-2.5 py-1.5 rounded-lg bg-[#3A5A6B] hover:bg-[#2C4452] text-white font-bold text-[9px] cursor-pointer"
+                            >
+                              {simulatedPixCopied ? "Copiado" : "Copiar"}
+                            </button>
+                          </div>
+                        </div>
+
+                        {/* Automated activation button */}
+                        <div className="pt-2 border-t border-slate-100 max-w-sm mx-auto">
+                          <button
+                            onClick={() => {
+                              setSimulatedPaymentProcessing(true);
+                              setTimeout(() => {
+                                if (userId) {
+                                  const userDocRef = doc(db, "users", userId);
+                                  setDoc(userDocRef, { isPaid: true, paidAt: serverTimestamp() }, { merge: true })
+                                    .then(() => {
+                                      setIsPaid(true);
+                                      setShowSimulatedCheckout(false);
+                                      setSimulatedPaymentProcessing(false);
+                                      alert("Pix Detectado com sucesso! 🎉 Seu Acesso Pro Vitalício foi liberado no mesmo segundo.");
+                                    })
+                                    .catch((err) => {
+                                      console.error(err);
+                                      setSimulatedPaymentProcessing(false);
+                                    });
+                                }
+                              }, 1500);
+                            }}
+                            className="w-full inline-flex items-center justify-center gap-1.5 rounded-xl bg-emerald-600 hover:bg-emerald-700 text-white font-black text-xs px-5 py-3 cursor-pointer"
+                          >
+                            <span>Simular Pagamento Instantâneo Pix</span>
+                            <span className="text-xs">✔</span>
+                          </button>
+                        </div>
+                      </div>
+                    )}
+                  </div>
+                </div>
+              )}
+            </div>
+          ) : (
+            <section className="max-w-2xl mx-auto leading-relaxed space-y-4">
+              {/* Novo Plano e Assinatura Premium - Altamente estético em cor clara integrada */}
+              <div className="rounded-2xl border border-brand-border bg-white p-5 sm:p-6 shadow-xs space-y-5 relative overflow-hidden text-left">
+                <div className="flex items-center justify-between border-b border-brand-border pb-4">
+                  <div className="space-y-1">
+                    <div className="inline-flex items-center gap-1.5 px-2.5 py-0.5 rounded-full text-[10px] font-black bg-[#EBF5FF] text-[#1E40AF] border border-[#BFDBFE] tracking-wider uppercase">
+                      👑 PLANO DE ASSINATURA
+                    </div>
+                    <h3 className="text-base font-black text-brand-text pt-1 mb-0">
+                      Confirma • Acesso Vitalício Premium
+                    </h3>
+                  </div>
+                  <div>
+                    {isPaid ? (
+                      <span className="inline-flex items-center gap-1 px-2.5 py-1 rounded-full text-xs font-bold bg-[#E6FFFA] text-[#006652] border border-[#B2F5EA]">
+                        ✨ Premium Ativo
+                      </span>
+                    ) : (
+                      <span className="inline-flex items-center gap-1 px-2.5 py-1 rounded-full text-xs font-bold bg-amber-50 text-amber-800 border border-amber-200">
+                        Assinatura Inativa
+                      </span>
+                    )}
+                  </div>
+                </div>
+
+                {isPaid ? (
+                  <div className="space-y-4">
+                    <p className="text-xs text-brand-muted leading-relaxed">
+                      Sua conta do <strong>Confirma</strong> já possui o <strong>Acesso Vitalício Premium Ativo</strong>. Todos os recursos completos de IA, prontuários do paciente e relatórios integrados estão liberados sem mensalidades!
+                    </p>
+                    <div className="grid grid-cols-1 sm:grid-cols-3 gap-2 text-center pt-2">
+                      <div className="p-3 bg-slate-50 rounded-xl border border-brand-border/40">
+                        <div className="text-[#3A5A6B] font-black text-xs">Membros Ilimitados</div>
+                        <div className="text-[10px] text-brand-muted mt-0.5">Sem limite de prontuários</div>
+                      </div>
+                      <div className="p-3 bg-slate-50 rounded-xl border border-brand-border/40">
+                        <div className="text-[#3A5A6B] font-black text-xs font-sans">Robô IA Pro</div>
+                        <div className="text-[10px] text-brand-muted mt-0.5">Análises administrativas</div>
+                      </div>
+                      <div className="p-3 bg-slate-50 rounded-xl border border-brand-border/40">
+                        <div className="text-[#3A5A6B] font-black text-xs">Gerador Estatístico</div>
+                        <div className="text-[10px] text-brand-muted mt-0.5">Auditoria e Exportação</div>
+                      </div>
+                    </div>
+                    <div className="p-3 bg-emerald-50 rounded-xl text-center text-xs text-emerald-800 font-bold border border-emerald-100">
+                      Agradecemos por apoiar e investir no desenvolvimento independente do Confirma! ❤️
+                    </div>
+                  </div>
+                ) : (
+                  <div className="space-y-4">
+                    <p className="text-xs text-brand-muted leading-relaxed">
+                      Sua conta do <strong>Confirma</strong> não possui uma assinatura ativa no momento. Ative o plano de pagamento único por apenas R$ 99,90 para liberar todos os recursos do sistema.
+                    </p>
+
+                    {/* Clean list with premium features (no trial vs pro comparison grid) */}
+                    <div className="p-4 bg-slate-50 rounded-xl border border-brand-border/50 text-xs text-left">
+                      <p className="font-bold text-[#1E40AF] uppercase tracking-wider text-[10px] mb-2">Recursos inclusos na assinatura:</p>
+                      <ul className="space-y-1.5 text-slate-700">
+                        <li className="flex items-center gap-2">
+                          <span className="text-emerald-500 font-bold">✓</span>
+                          <span><strong>Prontuários & Pacientes Ilimitados</strong>: gerencie todo o seu consultório psicoterapêutico sem qualquer limitação.</span>
+                        </li>
+                        <li className="flex items-center gap-2">
+                          <span className="text-emerald-500 font-bold">✓</span>
+                          <span><strong>Agenda Inteligente Completa</strong>: lance sessões recorrentes, marque faltas ou presenças e envie lembretes.</span>
+                        </li>
+                        <li className="flex items-center gap-2">
+                          <span className="text-emerald-500 font-bold">✓</span>
+                          <span><strong>Assistente de Atendimento IA</strong>: gere resumos clínicos de prontuários, análises financeiras e automações de clínica.</span>
+                        </li>
+                        <li className="flex items-center gap-2">
+                          <span className="text-emerald-500 font-bold">✓</span>
+                          <span><strong>Exportações & Relatórios</strong>: emita balancetes e listas completas para controle perfeito de faturamento.</span>
+                        </li>
+                      </ul>
+                    </div>
+
+                    <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-4 pt-4 border-t border-slate-100 text-left">
+                      <div>
+                        <span className="text-[9px] text-brand-muted uppercase font-black tracking-widest block">INVESTIMENTO ÚNICO</span>
+                        <div className="flex items-baseline gap-1 mt-0.5">
+                          <span className="text-xs text-brand-muted">De R$ 197 por</span>
+                          <span className="text-[#3A5A6B] text-xs font-sans">R$</span>
+                          <span className="text-xl font-black text-brand-text">99</span>
+                          <span className="text-xs font-bold text-brand-text">,90</span>
+                          <span className="ml-1.5 inline-block px-1.5 py-0.5 rounded bg-[#EBF5FF] text-[#1E40AF] text-[9px] font-bold">Acesso Vitalício</span>
+                        </div>
+                      </div>
+
+                      <button
+                        onClick={handleCreateCheckout}
+                        className="inline-flex items-center justify-center gap-1.5 rounded-xl bg-[#3A5A6B] hover:bg-[#2C4452] text-white font-black text-xs px-5 py-3 cursor-pointer shadow-xs transition-all border-none"
+                      >
+                        <span>Abrir Página de Checkout Seguro</span>
+                        <Sparkles className="h-4 w-4 text-slate-100 animate-pulse" />
+                      </button>
+                    </div>
+                  </div>
+                )}
+              </div>
+
             {/* Backups e dados de conta */}
             <div className="rounded-2xl border border-brand-border bg-white p-5 shadow-xs space-y-3">
               <h3 className="inline-flex items-center gap-1.5 text-sm font-black text-brand-text uppercase tracking-wider pb-1">
@@ -1444,7 +2146,8 @@ export default function App() {
             </div>
 
           </section>
-        )}
+        )
+      )}
 
           </main>
         </div>
