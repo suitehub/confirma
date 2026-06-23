@@ -53,6 +53,7 @@ import AuthGate from "./components/AuthGate";
 import SessionModal from "./components/SessionModal";
 import PatientModal from "./components/PatientModal";
 import SessionRow from "./components/SessionRow";
+import TherapistProfileModal from "./components/TherapistProfileModal";
 
 // Modular feature tab imports
 import DashboardTab from "./components/DashboardTab";
@@ -90,6 +91,15 @@ export default function App() {
   const [userId, setUserId] = useState<string | null>(null);
   const [initializing, setInitializing] = useState(true);
 
+  // Therapist profile state
+  const [therapistName, setTherapistName] = useState<string>(() => {
+    return localStorage.getItem("confirma_therapist_name") || "Henrique Castro Santos";
+  });
+  const [therapistPhoto, setTherapistPhoto] = useState<string>(() => {
+    return localStorage.getItem("confirma_therapist_photo") || "";
+  });
+  const [showProfileModal, setShowProfileModal] = useState<boolean>(false);
+
   // Application data state
   const [state, setState] = useState<AppState>(getInitialState());
   const [activeTab, setActiveTab] = useState<
@@ -109,6 +119,10 @@ export default function App() {
   const [simulatedCardCvv, setSimulatedCardCvv] = useState<string>("");
   const [simulatedPixCopied, setSimulatedPixCopied] = useState<boolean>(false);
   const [simulatedPaymentProcessing, setSimulatedPaymentProcessing] = useState<boolean>(false);
+  const [publishableKey, setPublishableKey] = useState<string>("");
+  const [stripePromise, setStripePromise] = useState<any>(null);
+  const [clientSecret, setClientSecret] = useState<string>("");
+  const [paymentIntentLoading, setPaymentIntentLoading] = useState<boolean>(false);
   const [profileInitialSubTab, setProfileInitialSubTab] = useState<"dados" | "historico" | "financeiro" | "formularios" | "prontuario" | "insights" | null>(null);
   const [profileInitialOccurrence, setProfileInitialOccurrence] = useState<Occurrence | null>(null);
   const [isSidebarOpen, setIsSidebarOpen] = useState(false);
@@ -235,6 +249,23 @@ export default function App() {
             const data = cloudDoc.data();
             const loadedIsPaid = data && data.isPaid !== undefined ? !!data.isPaid : false;
             setIsPaid(loadedIsPaid);
+
+            if (data) {
+              if (data.displayName) {
+                setTherapistName(data.displayName);
+                localStorage.setItem("confirma_therapist_name", data.displayName);
+              } else {
+                setTherapistName("Henrique Castro Santos");
+                localStorage.removeItem("confirma_therapist_name");
+              }
+              if (data.photoUrl) {
+                setTherapistPhoto(data.photoUrl);
+                localStorage.setItem("confirma_therapist_photo", data.photoUrl);
+              } else {
+                setTherapistPhoto("");
+                localStorage.removeItem("confirma_therapist_photo");
+              }
+            }
             
             if (data && data.state) {
               const cloudState: AppState = {
@@ -285,17 +316,7 @@ export default function App() {
     return () => unsubscribe();
   }, []);
 
-  // Check Stripe Configuration on load
-  useEffect(() => {
-    fetch("/api/stripe/config")
-      .then((res) => res.json())
-      .then((data) => {
-        setStripeConfigured(!!data.stripeConfigured);
-      })
-      .catch((err) => console.warn("Failed to check Stripe integration info", err));
-  }, []);
-
-  // Handle successful redirects from paywall/stripe checkout
+  // Handle successful redirects from paywall
   useEffect(() => {
     const params = new URLSearchParams(window.location.search);
     const success = params.get("success");
@@ -318,57 +339,19 @@ export default function App() {
     }
   }, [userId]);
 
-  // Create Stripe Checkout Session helper
-  const handleCreateCheckout = async () => {
+  // Open manual premium info/checkout flow helper
+  const handleCreateCheckout = () => {
     if (!userId) {
-      alert("Por favor, faça login antes de realizar o pagamento.");
+      alert("Por favor, faça login antes de acessar o plano Premium.");
       return;
     }
-
-    if (!stripeConfigured) {
-      // Abriremos a nossa própria página premium de checkout visual perfeitamente integrada!
-      setShowSimulatedCheckout(true);
-      return;
-    }
-
-    setCheckoutLoading(true);
-    try {
-      const response = await fetch("/api/stripe/create-checkout-session", {
-        method: "POST",
-        headers: {
-          "Content-Type": "application/json",
-        },
-        body: JSON.stringify({
-          userId: userId,
-          email: auth.currentUser?.email || "",
-        }),
-      });
-
-      const data = await response.json();
-      if (response.ok && data.url) {
-        // Abre o checkout em outra página/aba, conforme solicitado pelo usuário!
-        const checkoutWindow = window.open(data.url, "_blank");
-        if (!checkoutWindow || checkoutWindow.closed || typeof checkoutWindow.closed === "undefined") {
-          // Se o navegador ou iframe bloquear o popup, redireciona na mesma página
-          window.location.href = data.url;
-        }
-      } else {
-        setShowSimulatedCheckout(true);
-      }
-    } catch (err: any) {
-      console.warn("Stripe call error, abrindo simulador visivel:", err);
-      setShowSimulatedCheckout(true);
-    } finally {
-      setCheckoutLoading(false);
-    }
+    setShowSimulatedCheckout(true);
   };
 
   // Save changes triggers local storage immediately and debounces firestore sync
   const updateState = (updater: (prev: AppState) => AppState) => {
     if (!isPaid) {
       alert("Acesso Limitado à Visualização: Por favor, ative seu Plano Vitalício Premium nas Definições para liberar o cadastro, alteração e salvamento de dados!");
-      setActiveTab("settings");
-      setShowSimulatedCheckout(true);
       return;
     }
     setState((prev) => {
@@ -468,8 +451,6 @@ export default function App() {
     e.preventDefault();
     if (!isPaid) {
       alert("Modo de Visualização: A ativação da sua assinatura Premium é necessária para cadastrar novos pacientes.");
-      setActiveTab("settings");
-      setShowSimulatedCheckout(true);
       return;
     }
     const name = newPatientName.trim();
@@ -505,8 +486,6 @@ export default function App() {
   const handleSaveSession = (draft: Omit<Session, "id" | "createdAt">) => {
     if (!isPaid) {
       alert("Modo de Visualização: A ativação da sua assinatura Premium é necessária para agendar ou alterar consultas.");
-      setActiveTab("settings");
-      setShowSimulatedCheckout(true);
       return;
     }
     if (editingSession) {
@@ -542,8 +521,6 @@ export default function App() {
   const handleDeleteSession = (id: string) => {
     if (!isPaid) {
       alert("Modo de Visualização: A ativação da sua assinatura Premium é necessária para excluir agendamentos.");
-      setActiveTab("settings");
-      setShowSimulatedCheckout(true);
       return;
     }
     updateState((prev) => {
@@ -579,8 +556,6 @@ export default function App() {
   const handleSavePatientEdit = (patientData: Partial<Patient>) => {
     if (!isPaid) {
       alert("Modo de Visualização: A ativação da sua assinatura Premium é necessária para salvar prontuários ou cadastrar pacientes.");
-      setActiveTab("settings");
-      setShowSimulatedCheckout(true);
       return;
     }
     const rawPhone = patientData.phone || "";
@@ -637,8 +612,6 @@ export default function App() {
   const handleDeletePatient = () => {
     if (!isPaid) {
       alert("Modo de Visualização: A ativação da sua assinatura Premium é necessária para excluir pacientes.");
-      setActiveTab("settings");
-      setShowSimulatedCheckout(true);
       return;
     }
     if (!editingPatient) return;
@@ -678,8 +651,6 @@ export default function App() {
   const handleStatusChange = (key: string, newStatus: string) => {
     if (!isPaid) {
       alert("Modo de Visualização: A ativação da sua assinatura Premium é necessária para marcar presenças ou faltas.");
-      setActiveTab("settings");
-      setShowSimulatedCheckout(true);
       return;
     }
     updateState((prev) => ({
@@ -695,8 +666,6 @@ export default function App() {
   const handleSaveTplConfirmDefault = (text: string) => {
     if (!isPaid) {
       alert("Modo de Visualização: A ativação da sua assinatura Premium é necessária para alterar templates.");
-      setActiveTab("settings");
-      setShowSimulatedCheckout(true);
       return;
     }
     const cleaned = sanitizeMessage(text);
@@ -717,8 +686,6 @@ export default function App() {
   const handleSaveTplReforco = (text: string) => {
     if (!isPaid) {
       alert("Modo de Visualização: A ativação da sua assinatura Premium é necessária para alterar templates.");
-      setActiveTab("settings");
-      setShowSimulatedCheckout(true);
       return;
     }
     const cleaned = sanitizeMessage(text);
@@ -739,8 +706,6 @@ export default function App() {
   const handleSaveTplSemResposta = (text: string) => {
     if (!isPaid) {
       alert("Modo de Visualização: A ativação da sua assinatura Premium é necessária para alterar templates.");
-      setActiveTab("settings");
-      setShowSimulatedCheckout(true);
       return;
     }
     const cleaned = sanitizeMessage(text);
@@ -763,8 +728,6 @@ export default function App() {
     e.preventDefault();
     if (!isPaid) {
       alert("Modo de Visualização: A ativação da sua assinatura Premium é necessária para criar templates personalizados.");
-      setActiveTab("settings");
-      setShowSimulatedCheckout(true);
       return;
     }
     const name = newTplName.trim();
@@ -800,8 +763,6 @@ export default function App() {
   const handleDeleteCustomTemplate = (id: string) => {
     if (!isPaid) {
       alert("Modo de Visualização: A ativação da sua assinatura Premium é necessária para excluir templates.");
-      setActiveTab("settings");
-      setShowSimulatedCheckout(true);
       return;
     }
     updateState((prev) => ({
@@ -834,8 +795,6 @@ export default function App() {
   const handleImportBackup = (e: React.ChangeEvent<HTMLInputElement>) => {
     if (!isPaid) {
       alert("Modo de Visualização: A ativação da sua assinatura Premium é necessária para importar backups.");
-      setActiveTab("settings");
-      setShowSimulatedCheckout(true);
       return;
     }
     const file = e.target.files?.[0];
@@ -878,8 +837,6 @@ export default function App() {
   const handleResetTemplate = (key: keyof typeof defaultTemplates) => {
     if (!isPaid) {
       alert("Modo de Visualização: A ativação da sua assinatura Premium é necessária para redefinir templates.");
-      setActiveTab("settings");
-      setShowSimulatedCheckout(true);
       return;
     }
     if (confirm("Deseja redefinir este template para o conteúdo original?")) {
@@ -890,6 +847,29 @@ export default function App() {
           [key]: defaultTemplates[key]
         }
       }));
+    }
+  };
+
+  // Save Therapist Profile Edit
+  const handleSaveTherapistProfile = async (name: string, photo: string) => {
+    if (!userId) return;
+    try {
+      await setDoc(doc(db, "users", userId), {
+        displayName: name,
+        photoUrl: photo,
+        updatedAt: serverTimestamp()
+      }, { merge: true });
+      setTherapistName(name);
+      setTherapistPhoto(photo);
+      localStorage.setItem("confirma_therapist_name", name);
+      if (photo) {
+        localStorage.setItem("confirma_therapist_photo", photo);
+      } else {
+        localStorage.removeItem("confirma_therapist_photo");
+      }
+    } catch (err) {
+      console.error("Erro ao salvar perfil do terapeuta:", err);
+      throw err;
     }
   };
 
@@ -911,8 +891,20 @@ export default function App() {
   if (!userId) {
     return (
       <AuthGate 
-        onAuthenticated={(uid) => {
+        onAuthenticated={async (uid, displayName) => {
           setUserId(uid);
+          if (displayName) {
+            setTherapistName(displayName);
+            localStorage.setItem("confirma_therapist_name", displayName);
+            try {
+              await setDoc(doc(db, "users", uid), {
+                displayName: displayName,
+                updatedAt: serverTimestamp()
+              }, { merge: true });
+            } catch (err) {
+              console.error("Erro ao salvar nome no cadastro inicial:", err);
+            }
+          }
         }} 
         onLogout={() => {}} 
       />
@@ -1057,25 +1049,37 @@ export default function App() {
         </div>
 
         {/* PROFILE BOTTOM TILE */}
-        <div className="border-t border-brand-border p-4 bg-slate-50 shrink-0">
-          <div className="flex items-center justify-between gap-2">
-            <div className="flex items-center gap-2 min-w-0">
-              <div className="flex h-8 w-8 shrink-0 items-center justify-center rounded-xl bg-brand-primary font-black text-white text-xs uppercase">
-                {userId?.substring(0, 2).toUpperCase() || "CL"}
+        <div className="border-t border-[#DFE7EC] p-3.5 bg-slate-50 shrink-0">
+          <div className="flex items-center justify-between gap-1.5">
+            <button
+              onClick={() => setShowProfileModal(true)}
+              className="flex items-center gap-2 min-w-0 text-left hover:bg-slate-200/60 p-1.5 -m-1.5 rounded-2xl flex-1 group transition-colors cursor-pointer"
+              title="Visualizar Perfil Profissional"
+            >
+              <div className="flex h-9 w-9 shrink-0 items-center justify-center rounded-xl bg-brand-primary overflow-hidden border border-[#DFE7EC] font-black text-white text-xs uppercase shadow-xs">
+                {therapistPhoto ? (
+                  <img src={therapistPhoto} alt={therapistName} className="h-full w-full object-cover animate-in fade-in duration-300" />
+                ) : (
+                  therapistName.substring(0, 2).toUpperCase()
+                )}
               </div>
               <div className="min-w-0">
-                <span className="block text-[11px] font-black text-brand-text truncate leading-tight">
-                  Meu Consultório
+                <span className="block text-[11px] font-black text-brand-text truncate leading-tight group-hover:text-brand-primary transition-colors">
+                  {therapistName}
                 </span>
-                <span className="block text-[10px] text-brand-muted truncate leading-tight">
-                  {userId}
+                <span className={`inline-flex items-center gap-0.5 mt-1 px-1.5 py-0.5 rounded-full text-[8.5px] font-black uppercase leading-tight ${
+                  isPaid 
+                    ? "bg-[#D1FAE5] text-[#065F46] border border-[#A7F3D0]"
+                    : "bg-[#FEF3C7] text-[#92400E] border border-[#FDE68A] animate-pulse"
+                }`}>
+                  {isPaid ? "★ PREMIUM" : "⚡ Plano Grátis"}
                 </span>
               </div>
-            </div>
+            </button>
             
             <button
               onClick={handleLogout}
-              className="flex h-8 w-8 items-center justify-center rounded-xl border border-brand-border bg-white text-brand-muted hover:bg-red-50 hover:text-red-700 transition-colors cursor-pointer"
+              className="flex h-8 w-8 shrink-0 items-center justify-center rounded-xl border border-[#DFE7EC] bg-white text-brand-muted hover:bg-red-50 hover:text-red-700 transition-colors cursor-pointer"
               title="Sair"
             >
               <LogOut className="h-4 w-4" />
@@ -1122,8 +1126,6 @@ export default function App() {
               onClick={() => {
                 if (!isPaid) {
                   alert("Modo de Visualização: A ativação da sua assinatura Premium é necessária para criar novos agendamentos.");
-                  setActiveTab("settings");
-                  setShowSimulatedCheckout(true);
                   return;
                 }
                 setEditingSession(null);
@@ -1160,7 +1162,7 @@ export default function App() {
                 <button
                   onClick={() => {
                     setActiveTab("settings");
-                    setShowSimulatedCheckout(true);
+                    handleCreateCheckout();
                   }}
                   className="inline-flex items-center gap-1 bg-[#3A5A6B] hover:bg-[#2C4452] text-white font-black text-xs px-4 py-2.5 rounded-xl cursor-pointer shadow-xs transition-all shrink-0 uppercase tracking-wider border-none self-start sm:self-auto"
                 >
@@ -1267,8 +1269,6 @@ export default function App() {
             onAddSessionAt={(date, time) => {
               if (!isPaid) {
                 alert("Modo de Visualização: A ativação da sua assinatura Premium é necessária para criar novos agendamentos.");
-                setActiveTab("settings");
-                setShowSimulatedCheckout(true);
                 return;
               }
               setSessionModalInitialDate(date);
@@ -1389,8 +1389,6 @@ export default function App() {
                   onClick={() => {
                     if (!isPaid) {
                       alert("Modo de Visualização: A ativação da sua assinatura Premium é necessária para cadastrar novos pacientes.");
-                      setActiveTab("settings");
-                      setShowSimulatedCheckout(true);
                       return;
                     }
                     setEditingPatient(null);
@@ -1571,8 +1569,6 @@ export default function App() {
             onScheduleReturn={(pId) => {
               if (!isPaid) {
                 alert("Modo de Visualização: A ativação da sua assinatura Premium é necessária para agendar novos retornos.");
-                setActiveTab("settings");
-                setShowSimulatedCheckout(true);
                 return;
               }
               setEditingSession(null);
@@ -1694,304 +1690,142 @@ export default function App() {
                 </button>
                 <div className="flex items-center gap-1.5 text-brand-primary">
                   <ShieldCheck className="h-5 w-5 text-brand-primary" />
-                  <span className="text-xs font-bold text-brand-muted">Ativação Segura • Premium</span>
+                  <span className="text-xs font-bold text-brand-muted">Ativação de Conta • Premium</span>
                 </div>
               </div>
 
-              {/* Simulated Loading State */}
-              {simulatedPaymentProcessing ? (
-                <div className="p-12 text-center flex flex-col items-center justify-center min-h-[450px] space-y-6">
-                  <div className="w-16 h-16 border-4 border-brand-primary/20 border-t-brand-primary rounded-full animate-spin"></div>
-                  <div className="space-y-2">
-                    <h3 className="text-lg font-black text-brand-text">Processando sua ativação...</h3>
-                    <p className="text-xs text-brand-muted max-w-xs mx-auto">
-                      Estamos enviando seu token de segurança e liberando seu acesso profissional completo.
-                    </p>
+              <div className="grid grid-cols-1 md:grid-cols-12 md:divide-x md:divide-brand-border">
+                {/* Left Column: Order Summary */}
+                <div className="md:col-span-12 lg:col-span-5 bg-slate-50/50 p-6 sm:p-8 space-y-6 text-left">
+                  <div className="space-y-1.5">
+                    <span className="text-[10px] font-black tracking-widest text-[#3A5A6B] uppercase block">Faturamento Confirma</span>
+                    <h2 className="text-lg font-black text-brand-text font-serif">Resumo do Pedido</h2>
                   </div>
-                </div>
-              ) : (
-                <div className="grid grid-cols-1 md:grid-cols-12 md:divide-x md:divide-brand-border">
-                  {/* Left Column: Order Summary */}
-                  <div className="md:col-span-12 lg:col-span-5 bg-slate-50/50 p-6 sm:p-8 space-y-6">
-                    <div className="space-y-1.5">
-                      <span className="text-[10px] font-black tracking-widest text-[#3A5A6B] uppercase block">CHECKOUT DO CONFIRMA</span>
-                      <h2 className="text-lg font-black text-brand-text">Resumo do Pedido</h2>
-                    </div>
 
-                    {/* Receipt Item */}
-                    <div className="p-4 rounded-2xl border border-brand-border bg-white space-y-3.5">
-                      <div className="flex items-start justify-between gap-2 border-b border-brand-border pb-3">
-                        <div>
-                          <p className="font-black text-xs text-brand-text">Confirma Premium</p>
-                          <p className="text-[11px] text-brand-muted mt-0.5">Acesso Premium Vitalício</p>
-                        </div>
+                  {/* Receipt Item */}
+                  <div className="p-4 rounded-2xl border border-brand-border bg-white space-y-3.5">
+                    <div className="flex items-start justify-between gap-2 border-b border-brand-border pb-3">
+                      <div>
+                        <p className="font-black text-xs text-brand-text">Confirma Premium</p>
+                        <p className="text-[11px] text-brand-muted mt-0.5">Acesso Premium Vitalício</p>
+                      </div>
+                      <div className="text-right">
+                        <span className="line-through text-slate-400 text-[10px] mr-1.5 font-bold">R$ 197,00</span>
                         <span className="font-extrabold text-[#3a5a6b] text-xs">R$ 99,90</span>
                       </div>
-                      <div className="flex items-center justify-between text-xs font-bold text-brand-text">
-                        <span>Investimento Único:</span>
+                    </div>
+                    <div className="flex items-center justify-between text-xs font-bold text-brand-text">
+                      <span>Investimento Único:</span>
+                      <div className="text-right">
+                        <span className="line-through text-slate-400 text-xs mr-2 font-bold">R$ 197,00</span>
                         <span className="text-base font-black text-[#3a5a6b]">R$ 99,90</span>
                       </div>
                     </div>
-
-                    {/* Features included list */}
-                    <div className="space-y-3.5 pt-2">
-                      <p className="text-[10px] font-black text-brand-muted uppercase tracking-wider">Benefícios inclusos:</p>
-                      <ul className="space-y-2.5 text-xs text-brand-muted">
-                        <li className="flex items-start gap-2">
-                          <span className="text-[#3A5A6B] font-bold select-none">✓</span>
-                          <span><strong>Pacientes & Prontuários Ilimitados</strong>: organize toda a sua carreira sem nenhum limite de cadastro mensal.</span>
-                        </li>
-                        <li className="flex items-start gap-2">
-                          <span className="text-[#3A5A6B] font-bold select-none">✓</span>
-                          <span><strong>Assistente IA Clínico Premium</strong>: gere resumos de prontuários e respostas inteligentes de WhatsApp.</span>
-                        </li>
-                        <li className="flex items-start gap-2">
-                          <span className="text-[#3A5A6B] font-bold select-none">✓</span>
-                          <span><strong>Exportador Completo</strong>: baixe relatórios financeiros consolidado em CSV ou XLSX para contabilidade.</span>
-                        </li>
-                      </ul>
-                    </div>
-
-                    <div className="p-4 bg-[#EBF5FF] rounded-2xl border border-[#BFDBFE] text-xs text-[#1E40AF] flex gap-2.5">
-                      <span className="text-sm">🛡️</span>
-                      <p className="leading-snug font-medium">
-                        <strong>Garantia Premium:</strong> 7 dias para testar todos os recursos! Reembolso automático caso mude de ideia.
-                      </p>
-                    </div>
                   </div>
 
-                  {/* Right Column: Payments Gateway */}
-                  <div className="md:col-span-12 lg:col-span-7 p-6 sm:p-8 space-y-6 bg-white">
-                    <div className="space-y-1">
-                      <h3 className="text-base font-black text-brand-text">Dados de Pagamento</h3>
-                      <p className="text-xs text-brand-muted">Escolha o seu método preferido para simular a adesão premium de R$ 99,90.</p>
-                    </div>
+                  {/* Features included list */}
+                  <div className="space-y-3.5 pt-2">
+                    <p className="text-[10px] font-black text-brand-muted uppercase tracking-wider">Benefícios inclusos:</p>
+                    <ul className="space-y-2.5 text-xs text-brand-muted">
+                      <li className="flex items-start gap-2">
+                        <span className="text-[#3A5A6B] font-bold select-none">✓</span>
+                        <span>Aproveite o <strong>Acesso Completo</strong> definitivo de todas as ferramentas e recursos existentes no sistema.</span>
+                      </li>
+                      <li className="flex items-start gap-2">
+                        <span className="text-[#3A5A6B] font-bold select-none">✓</span>
+                        <span><strong>Acesso a todos os usos do Confirma</strong> sem limites de cadastros, atendimentos ou solicitações de IA.</span>
+                      </li>
+                    </ul>
+                  </div>
 
-                    {/* Payment methods toggler */}
-                    <div className="grid grid-cols-2 p-1 bg-slate-100 rounded-xl border border-slate-200">
-                      <button
-                        onClick={() => setSimulatedPaymentMethod("card")}
-                        className={`flex items-center justify-center gap-1.5 py-2 rounded-lg text-xs font-black transition-all cursor-pointer ${
-                          simulatedPaymentMethod === "card"
-                            ? "bg-white text-brand-text shadow-xs"
-                            : "text-brand-muted hover:text-slate-800"
-                        }`}
-                      >
-                        <CreditCard className="h-4 w-4" />
-                        <span>Cartão de Crédito</span>
-                      </button>
-                      <button
-                        onClick={() => setSimulatedPaymentMethod("pix")}
-                        className={`flex items-center justify-center gap-1.5 py-2 rounded-lg text-xs font-black transition-all cursor-pointer ${
-                          simulatedPaymentMethod === "pix"
-                            ? "bg-white text-brand-text shadow-xs"
-                            : "text-brand-muted hover:text-slate-800"
-                        }`}
-                      >
-                        <span className="text-xs">⚡</span>
-                        <span>Pix Copia e Cola</span>
-                      </button>
-                    </div>
+                  <div className="p-4 bg-[#FFFBEB] rounded-2xl border-2 border-amber-400 text-xs text-[#92400E] flex gap-2.5 animate-pulse shadow-[0_0_18px_rgba(245,158,11,0.5)] ring-2 ring-amber-400/20">
+                    <span className="text-sm">⏳</span>
+                    <p className="leading-snug font-semibold text-[11px]">
+                      <strong>Aviso Importante:</strong> Em breve iremos migrar a plataforma para mensalidade por assinatura. Garanta agora o seu <strong>acesso vitalício</strong> por pagamento único e não perca essa oportunidade definitiva!
+                    </p>
+                  </div>
 
-                    {/* CARD OPTION */}
-                    {simulatedPaymentMethod === "card" && (
-                      <div className="space-y-5 animate-in fade-in duration-200">
-                        {/* Interactive Vector Credit Card */}
-                        <div className="relative rounded-2xl bg-gradient-to-br from-[#3A5A6B] to-[#1E2E38] text-white p-5 shadow-sm overflow-hidden aspect-[1.58/1] max-w-[310px] mx-auto select-none">
-                          <div className="flex justify-between items-start">
-                            <span className="text-[9px] font-black uppercase tracking-widest text-slate-300">CONFIRMA PRO</span>
-                            <div className="w-8 h-4.5 bg-white/20 rounded-xs flex items-center justify-center">
-                              <div className="w-1.5 h-3 bg-white/10 rounded-xs mx-0.5"></div>
-                            </div>
-                          </div>
-
-                          <div className="mt-5">
-                            <p className="font-mono text-sm tracking-widest text-center font-bold text-slate-100">
-                              {simulatedCardNumber || "•••• •••• •••• ••••"}
-                            </p>
-                          </div>
-
-                          <div className="mt-5 flex justify-between items-end border-t border-white/10 pt-2 bg-transparent text-left">
-                            <div>
-                              <p className="text-[7px] text-slate-300 uppercase tracking-widest leading-none">Titular</p>
-                              <p className="font-medium text-[10px] truncate max-w-[170px] uppercase text-white mt-0.5">
-                                {simulatedCardName || "NOME DO CLIENTE"}
-                              </p>
-                            </div>
-                            <div className="text-right">
-                              <p className="text-[7px] text-slate-300 uppercase tracking-widest leading-none">Validade</p>
-                              <p className="font-mono text-[10px] text-white mt-0.5">{simulatedCardExpiry || "MM/AA"}</p>
-                            </div>
-                          </div>
-                        </div>
-
-                        {/* Card Form fields */}
-                        <div className="space-y-3 text-left">
-                          <div>
-                            <label className="block text-[9px] font-black text-brand-muted uppercase mb-1">Nome Completo (como no cartão)</label>
-                            <input
-                              type="text"
-                              value={simulatedCardName}
-                              onChange={(e) => setSimulatedCardName(e.target.value)}
-                              placeholder="AMANDA S PAIVA"
-                              className="w-full text-xs rounded-xl border border-brand-border bg-slate-50/50 px-3 py-2 text-brand-text uppercase focus:outline-none focus:border-brand-primary"
-                            />
-                          </div>
-                          <div>
-                            <label className="block text-[9px] font-black text-brand-muted uppercase mb-1">Número do Cartão</label>
-                            <input
-                              type="text"
-                              maxLength={19}
-                              value={simulatedCardNumber}
-                              onChange={(e) => {
-                                let val = e.target.value.replace(/\s+/g, "").replace(/[^0-9]/gi, "");
-                                let formatted = val.match(/.{1,4}/g)?.join(" ") || val;
-                                setSimulatedCardNumber(formatted);
-                              }}
-                              placeholder="4123 4567 8901 2345"
-                              className="w-full text-xs rounded-xl border border-brand-border bg-slate-50/50 px-3 py-2 text-brand-text focus:outline-none focus:border-brand-primary"
-                            />
-                          </div>
-                          <div className="grid grid-cols-2 gap-3">
-                            <div>
-                              <label className="block text-[9px] font-black text-brand-muted uppercase mb-1">Validade (MM/AA)</label>
-                              <input
-                                type="text"
-                                maxLength={5}
-                                value={simulatedCardExpiry}
-                                onChange={(e) => {
-                                  let val = e.target.value.replace(/[^0-9]/gi, "");
-                                  if (val.length >= 2) {
-                                    setSimulatedCardExpiry(val.substring(0, 2) + "/" + val.substring(2, 4));
-                                  } else {
-                                    setSimulatedCardExpiry(val);
-                                  }
-                                }}
-                                placeholder="12/28"
-                                className="w-full text-xs rounded-xl border border-brand-border bg-slate-50/50 px-3 py-2 text-brand-text focus:outline-none focus:border-brand-primary"
-                              />
-                            </div>
-                            <div>
-                              <label className="block text-[9px] font-black text-brand-muted uppercase mb-1">Código CVV</label>
-                              <input
-                                type="text"
-                                maxLength={4}
-                                value={simulatedCardCvv}
-                                onChange={(e) => setSimulatedCardCvv(e.target.value.replace(/[^0-9]/gi, ""))}
-                                placeholder="123"
-                                className="w-full text-xs rounded-xl border border-brand-border bg-slate-50/50 px-3 py-2 text-brand-text focus:outline-none focus:border-brand-primary"
-                              />
-                            </div>
-                          </div>
-                        </div>
-
-                        <button
-                          onClick={async () => {
-                            if (!simulatedCardName || !simulatedCardNumber || !simulatedCardExpiry || !simulatedCardCvv) {
-                              alert("Por favor, preencha todos os campos do cartão para processar seu checkout!");
-                              return;
-                            }
-                            setSimulatedPaymentProcessing(true);
-                            setTimeout(() => {
-                              if (userId) {
-                                const userDocRef = doc(db, "users", userId);
-                                setDoc(userDocRef, { isPaid: true, paidAt: serverTimestamp() }, { merge: true })
-                                  .then(() => {
-                                    setIsPaid(true);
-                                    setShowSimulatedCheckout(false);
-                                    setSimulatedPaymentProcessing(false);
-                                    alert("Sucesso! Pagamento simulado com cartão de crédito aprovado com sucesso! Plano Vitalício ATIVADO! ❤️");
-                                  })
-                                  .catch((err) => {
-                                    console.error(err);
-                                    setSimulatedPaymentProcessing(false);
-                                  });
-                              }
-                            }, 1800);
-                          }}
-                          className="w-full inline-flex items-center justify-center gap-2 rounded-xl bg-[#3A5A6B] hover:bg-[#2C4452] text-white font-black text-xs px-5 py-3 cursor-pointer shadow-xs transition-all uppercase tracking-wider mt-2"
-                        >
-                          <span>Ativar com Cartão • R$ 99,90</span>
-                          <ShieldCheck className="h-4 w-4" />
-                        </button>
-                      </div>
-                    )}
-
-                    {/* PIX OPTION */}
-                    {simulatedPaymentMethod === "pix" && (
-                      <div className="space-y-5 animate-in fade-in duration-200 text-center">
-                        <div className="p-2.5 bg-emerald-50 rounded-xl border border-emerald-100 flex items-center justify-center gap-2 mx-auto max-w-[260px]">
-                          <span className="relative flex h-2 w-2">
-                            <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-emerald-400 opacity-75"></span>
-                            <span className="relative inline-flex rounded-full h-2 w-2 bg-emerald-500"></span>
-                          </span>
-                          <span className="text-[9px] text-[#006652] font-black uppercase tracking-wide">Código Pix Ativo Aguardando Pagamento</span>
-                        </div>
-
-                        {/* Pix QR Code Mockup */}
-                        <div className="bg-slate-50 rounded-2xl p-4 border border-brand-border max-w-[170px] mx-auto flex flex-col items-center">
-                          <div className="w-28 h-28 bg-white rounded-lg p-1.5 flex items-center justify-center border border-slate-200">
-                            <img
-                              src="https://api.qrserver.com/v1/create-qr-code/?size=150x150&data=00020101021226830014br.gov.bcb.pix2561pix.api.pagamentos.confirma_vitalicio.status_pending"
-                              alt="Pix QR Code"
-                              className="w-full h-full object-contain"
-                              referrerPolicy="no-referrer"
-                            />
-                          </div>
-                          <span className="text-[10px] text-brand-muted font-bold mt-2 font-mono">PIX TOTAL: R$ 99,90</span>
-                        </div>
-
-                        {/* Copy and paste section */}
-                        <div className="space-y-2">
-                          <p className="text-xs text-brand-muted">Copie o código Copia e Cola abaixo para pagar no app do seu banco:</p>
-                          <div className="flex items-center gap-1.5 p-2 rounded-xl border border-brand-border bg-slate-50 font-mono text-[9px] text-brand-muted text-left max-w-sm mx-auto overflow-hidden relative font-medium">
-                            <span className="truncate pr-12 text-slate-500">00020101021226830014br.gov.bcb.pix2561pix.api.pagamentos.confirma_vitalicio.status_pending</span>
-                            <button
-                              onClick={() => {
-                                navigator.clipboard.writeText("00020101021226830014br.gov.bcb.pix2561pix.api.pagamentos.confirma_vitalicio.status_pending");
-                                setSimulatedPixCopied(true);
-                                setTimeout(() => setSimulatedPixCopied(false), 2000);
-                              }}
-                              className="absolute right-1 top-1/2 -translate-y-1/2 px-2.5 py-1.5 rounded-lg bg-[#3A5A6B] hover:bg-[#2C4452] text-white font-bold text-[9px] cursor-pointer"
-                            >
-                              {simulatedPixCopied ? "Copiado" : "Copiar"}
-                            </button>
-                          </div>
-                        </div>
-
-                        {/* Automated activation button */}
-                        <div className="pt-2 border-t border-slate-100 max-w-sm mx-auto">
-                          <button
-                            onClick={() => {
-                              setSimulatedPaymentProcessing(true);
-                              setTimeout(() => {
-                                if (userId) {
-                                  const userDocRef = doc(db, "users", userId);
-                                  setDoc(userDocRef, { isPaid: true, paidAt: serverTimestamp() }, { merge: true })
-                                    .then(() => {
-                                      setIsPaid(true);
-                                      setShowSimulatedCheckout(false);
-                                      setSimulatedPaymentProcessing(false);
-                                      alert("Pix Detectado com sucesso! 🎉 Seu Acesso Pro Vitalício foi liberado no mesmo segundo.");
-                                    })
-                                    .catch((err) => {
-                                      console.error(err);
-                                      setSimulatedPaymentProcessing(false);
-                                    });
-                                }
-                              }, 1500);
-                            }}
-                            className="w-full inline-flex items-center justify-center gap-1.5 rounded-xl bg-emerald-600 hover:bg-emerald-700 text-white font-black text-xs px-5 py-3 cursor-pointer"
-                          >
-                            <span>Simular Pagamento Instantâneo Pix</span>
-                            <span className="text-xs">✔</span>
-                          </button>
-                        </div>
-                      </div>
-                    )}
+                  <div className="p-4 bg-[#EBF5FF] rounded-2xl border border-[#BFDBFE] text-xs text-[#1E40AF] flex gap-2.5">
+                    <span className="text-sm">🛡️</span>
+                    <p className="leading-snug font-medium">
+                      <strong>Acesso Definitivo:</strong> Sem taxas adicionais, sem assinaturas recorrentes. Compre uma vez, use para sempre.
+                    </p>
                   </div>
                 </div>
-              )}
+
+                {/* Right Column: Payments Gateway instructions */}
+                <div className="md:col-span-12 lg:col-span-7 p-6 sm:p-8 space-y-6 bg-white text-left">
+                  <div className="space-y-2">
+                    <div className="inline-flex items-center gap-1.5 px-2.5 py-0.5 rounded-full text-[9px] font-black bg-amber-50 text-amber-700 border border-amber-200 uppercase tracking-widest font-mono">
+                      ⚡ Ativação Manual Facilitada
+                    </div>
+                    <h3 className="text-base font-black text-brand-text">Como liberar seu acesso vitalício?</h3>
+                    <p className="text-xs text-brand-muted leading-relaxed">
+                      Siga o passo a passo simples abaixo para realizar o PIX e enviar o comprovante. Nossa equipe liberará sua conta imediatamente!
+                    </p>
+                  </div>
+
+                  {/* Step Card: Pay via Pix */}
+                  <div className="p-4 rounded-2xl bg-slate-50 border border-brand-border space-y-3">
+                    <div className="flex items-center gap-2">
+                      <div className="w-5 h-5 rounded-full bg-[#1E40AF] text-white text-[11px] font-black flex items-center justify-center font-mono">1</div>
+                      <p className="text-xs font-black text-brand-text">Realize o pagamento via Pix</p>
+                    </div>
+                    
+                    <div className="space-y-2">
+                      <label className="text-[9px] uppercase font-black tracking-widest text-brand-muted">Chave Pix Copia e Cola (E-mail):</label>
+                      <div className="flex items-center gap-2 bg-white rounded-xl border border-brand-border p-2">
+                        <span className="font-mono text-[11px] text-brand-text font-black flex-1 select-all truncate pr-2">
+                          confirma.psico@gmail.com
+                        </span>
+                        <button
+                          onClick={() => {
+                            navigator.clipboard.writeText("confirma.psico@gmail.com");
+                            alert("Chave Pix copiada com sucesso! Transfira o valor de R$ 99,90 no aplicativo do seu banco.");
+                          }}
+                          className="bg-[#1E40AF] hover:bg-[#1D4ED8] text-white font-black text-[10px] px-3.5 py-2 rounded-lg active:scale-95 transition-all cursor-pointer whitespace-nowrap"
+                        >
+                          Copiar Chave
+                        </button>
+                      </div>
+                      <div className="flex justify-between items-center text-[10px] text-brand-muted pt-1 font-semibold">
+                        <span>Beneficiário: Henrique Castro Santos</span>
+                        <span className="text-[#3A5A6B]">Valor: R$ 99,90</span>
+                      </div>
+                    </div>
+                  </div>
+
+                  {/* Step Card: Send proof */}
+                  <div className="p-4 rounded-2xl bg-slate-50 border border-brand-border space-y-3">
+                    <div className="flex items-center gap-2">
+                      <div className="w-5 h-5 rounded-full bg-[#1E40AF] text-white text-[11px] font-black flex items-center justify-center font-mono">2</div>
+                      <p className="text-xs font-black text-brand-text">Envie o comprovante de pagamento</p>
+                    </div>
+
+                    <p className="text-xs text-brand-muted leading-relaxed">
+                      Após realizar o PIX no app do banco, clique no botão abaixo para nos enviar o comprovante pelo Whatsapp. Dessa forma, iremos conceder o acesso premium vitalício!
+                    </p>
+
+                    <div className="grid grid-cols-1 gap-2 pt-1">
+                      <a
+                        href={`https://wa.me/5511959760647?text=Olá!%20Acabei%20de%20realizar%20o%20pagamento%20de%20R$%2099,90%20via%20Pix%20para%20o%20Confirma%20Premium.%20Segue%20o%20comprovante%20em%20anexo%20para%20ativar%20a%20minha%20conta.`}
+                        target="_blank"
+                        rel="noreferrer"
+                        className="w-full inline-flex items-center justify-center gap-2 rounded-xl bg-emerald-600 hover:bg-emerald-700 text-white font-black text-xs py-3 rounded-xl cursor-pointer shadow-md transition-all uppercase tracking-wider text-center"
+                      >
+                        <span className="text-sm">💬</span>
+                        <span>Enviar comprovante por WhatsApp</span>
+                      </a>
+                    </div>
+                  </div>
+
+                  <div className="text-center pt-2">
+                    <p className="text-[10px] text-brand-muted font-black tracking-widest uppercase flex items-center justify-center gap-2 font-mono">
+                      <span>🔒</span> SUPORTE DIÁRIO DE ATIVAÇÃO DAS 08H ÀS 22H
+                    </p>
+                  </div>
+                </div>
+              </div>
             </div>
           ) : (
             <section className="max-w-2xl mx-auto leading-relaxed space-y-4">
@@ -2179,6 +2013,19 @@ export default function App() {
         onSave={handleSavePatientEdit}
         onDelete={handleDeletePatient}
         patient={editingPatient}
+      />
+
+      <TherapistProfileModal
+        isOpen={showProfileModal}
+        onClose={() => setShowProfileModal(false)}
+        initialName={therapistName}
+        initialPhoto={therapistPhoto}
+        isPaid={isPaid}
+        onSave={handleSaveTherapistProfile}
+        onUpgrade={() => {
+          setActiveTab("settings");
+          setShowSimulatedCheckout(true);
+        }}
       />
     </div>
   );

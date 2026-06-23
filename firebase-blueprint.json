@@ -9,13 +9,30 @@
           "$ref": "AppState",
           "description": "Entire practice database including patients, sessions, records, financials, and templates"
         },
+        "displayName": {
+          "type": "string",
+          "description": "Full professional legal name of the psychologist"
+        },
+        "photoUrl": {
+          "type": "string",
+          "description": "Profile picture URL or raw Base64 data representation"
+        },
+        "isPaid": {
+          "type": "boolean",
+          "description": "Licensing key/flag indicating lifetime premium validation status"
+        },
+        "paidAt": {
+          "type": "string",
+          "format": "date-time",
+          "description": "Moment of transaction completing upgrade checkout flow"
+        },
         "updatedAt": {
           "type": "string",
           "format": "date-time",
           "description": "Server-side revision timestamp of the clinical state"
         }
       },
-      "required": ["state", "updatedAt"]
+      "required": ["updatedAt"]
     },
     "AppState": {
       "title": "AppState",

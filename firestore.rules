@@ -30,10 +30,14 @@ service cloud.firestore {
 
     // Validation helper for User document (blueprint constraints)
     function isValidUser(data) {
-      return data.keys().hasAll(['state', 'updatedAt']) 
-        && data.keys().size() == 2
-        && data.state is map
-        && data.updatedAt is timestamp;
+      return data.keys().hasAll(['updatedAt']) 
+        && data.keys().size() <= 6
+        && data.updatedAt is timestamp
+        && (!data.keys().hasAny(['state']) || data.state is map)
+        && (!data.keys().hasAny(['displayName']) || (data.displayName is string && data.displayName.size() <= 200))
+        && (!data.keys().hasAny(['photoUrl']) || (data.photoUrl is string && data.photoUrl.size() <= 800000))
+        && (!data.keys().hasAny(['isPaid']) || data.isPaid is bool)
+        && (!data.keys().hasAny(['paidAt']) || data.paidAt is timestamp);
     }
 
     // Allow connection testing to the test/connection document (Phase 1)
@@ -57,8 +61,14 @@ service cloud.firestore {
         && request.auth.uid == userId 
         && isValidId(userId)
         && isValidUser(incoming())
-        && incoming().updatedAt == request.time
-        && incoming().diff(existing()).affectedKeys().hasOnly(['state', 'updatedAt']);
+        && (
+          // Action 1: State Update (e.g., patient, agenda changes)
+          (incoming().diff(existing()).affectedKeys().hasOnly(['state', 'updatedAt']) && incoming().updatedAt == request.time) ||
+          // Action 2: Professional Profile update (e.g., photo, name changes)
+          (incoming().diff(existing()).affectedKeys().hasOnly(['displayName', 'photoUrl', 'updatedAt']) && incoming().updatedAt == request.time) ||
+          // Action 3: Licensing (Simulated Paywall success update)
+          (incoming().diff(existing()).affectedKeys().hasOnly(['isPaid', 'paidAt']))
+        );
         
       allow delete: if isSignedIn() && request.auth.uid == userId && isValidId(userId);
     }

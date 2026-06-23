@@ -21,11 +21,12 @@ import {
   ChevronRight,
   ArrowLeft,
   Sparkles,
-  UserPlus
+  UserPlus,
+  User
 } from "lucide-react";
 
 interface AuthGateProps {
-  onAuthenticated: (uid: string) => void;
+  onAuthenticated: (uid: string, displayName?: string) => void;
   onLogout: () => void;
 }
 
@@ -33,6 +34,7 @@ export default function AuthGate({ onAuthenticated, onLogout }: AuthGateProps) {
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
   const [confirmPassword, setConfirmPassword] = useState("");
+  const [registerName, setRegisterName] = useState("");
   const [error, setError] = useState<string | null>(null);
   const [info, setInfo] = useState<string | null>(null);
   const [isResetMode, setIsResetMode] = useState(false);
@@ -94,6 +96,10 @@ export default function AuthGate({ onAuthenticated, onLogout }: AuthGateProps) {
     e.preventDefault();
     setError(null);
     setInfo(null);
+    if (!registerName.trim()) {
+      setError("Por favor, informe seu nome de cadastro profissional.");
+      return;
+    }
     if (!email || !password || !confirmPassword) {
       setError("Por favor, preencha todos os campos.");
       return;
@@ -109,7 +115,7 @@ export default function AuthGate({ onAuthenticated, onLogout }: AuthGateProps) {
     setIsSubmitLoading(true);
     try {
       const userCredential = await createUserWithEmailAndPassword(auth, email.trim(), password);
-      onAuthenticated(userCredential.user.uid);
+      onAuthenticated(userCredential.user.uid, registerName.trim());
     } catch (err: any) {
       console.error(err);
       if (err?.code === "auth/email-already-in-use") {
@@ -561,6 +567,23 @@ export default function AuthGate({ onAuthenticated, onLogout }: AuthGateProps) {
             {/* -------------------- SIGNUP / REGISTER INPUTS -------------------- */}
             {!isResetMode && !forgotPasswordActive && signUpMode && (
               <form onSubmit={handleSignUp} className="space-y-4">
+                <div>
+                  <label className="block text-xs font-black text-slate-700 uppercase tracking-wider">Seu Nome Completo (Psicólogo(a))</label>
+                  <div className="relative mt-1.5">
+                    <span className="absolute inset-y-0 left-0 flex items-center pl-3.5 pointer-events-none text-slate-400">
+                      <User className="h-4 w-4" />
+                    </span>
+                    <input
+                      type="text"
+                      placeholder="Ex: Dr(a). Henrique Castro Santos"
+                      value={registerName}
+                      onChange={(e) => setRegisterName(e.target.value)}
+                      className="w-full rounded-xl border border-brand-border bg-white pl-10 pr-4 py-3 text-sm font-semibold outline-none focus:border-brand-primary focus:ring-4 focus:ring-brand-primary/10 transition-all text-brand-text placeholder-slate-400"
+                      required
+                    />
+                  </div>
+                </div>
+
                 <div>
                   <label className="block text-xs font-black text-slate-700 uppercase tracking-wider">E-mail para Cadastro</label>
                   <div className="relative mt-1.5">
